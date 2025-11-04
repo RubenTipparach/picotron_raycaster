@@ -1,0 +1,4120 @@
+====================================================================================================
+    Picotron User Manual
+====================================================================================================
+
+Picotron v0.2.1d
+https://www.picotron.net
+(c) Copyright 2022~25 Lexaloffle Games LLP
+Author: Joseph White // hey@lexaloffle.com
+
+Picotron is made with:
+ 
+    SDL2 http://www.libsdl.org
+    Lua 5.4 http://www.lua.org  // see license.txt
+    lz4 by Yann Collet https://www.lz4.org // see license.txt
+    z8lua by Sam Hocevar https://github.com/samhocevar/z8lua
+    GIFLIB http://giflib.sourceforge.net/
+    libb64 by Chris Venter
+
+Latest version of this manual: https://www.lexaloffle.com/picotron.php?page=resources
+
+:: Contents
+
+:: Welcome to Picotron!
+
+    Picotron is a Fantasy Workstation for making pixelart games, animations, music, demos and other 
+    curiosities.  It can also be used to create tools that run inside Picotron itself, and to 
+    customise things like live wallpapers and screensavers. It has a toy operating system designed 
+    to be a cosy creative space, but runs on top of Windows,  MacOS or Linux. Picotron apps can be 
+    made with built-in tools, and shared with other users in a special 256k png  cartridge format.
+
+:: Specifications
+
+    Display:  480x270 / 240x135 64 definable colours
+    Graphics: Blend tables, tline3d, stencil clipping
+    Audio:    64-node synth and 8-channel tracker
+    Code:     Lua 5.4 w/ PICO-8 compatability features
+    CPU:      8M Lua vm insts / second
+    Cart:     .p64.png (256k) / .p64 ("unlimited")
+
+====================================================================================================
+    Getting Started
+====================================================================================================
+
+----------------------------------------------------------------------------------------------------
+Shortcuts
+----------------------------------------------------------------------------------------------------
+
+    ALT+ENTER:       Toggle Fullscreen
+    ALT+F4:          Fast Quit (Windows)
+    CTRL-Q:          Fast Quit (Mac, Linux) -- need to enable in settings
+    CTRL-R:          Reload / Run / Restart cartridge
+    CTRL-SHIFT-R:    Live-reload a single .lua or .gfx file while /ram/cart is running
+    CTRL-S:          Quick-Save working cartridge (or current file if not inside /ram/cart)
+    ALT+LEFT/RIGHT   Change Workspace (use option on Mac)
+    ESCAPE:          Toggle between desktop / terminal
+    ENTER:           Pause menu (fullscreen apps)
+    CTRL-6:          Capture a Screenshot, saved as {Your Desktop}/picotron_desktop
+    CTRL-7:          Capture a Cartridge Label
+    CTRL-8:          Start recording a GIF (SHIFT-CTRL-8 to select a region first)
+    CTRL-9:          End recording GIF
+
+----------------------------------------------------------------------------------------------------
+Creating a Cartridge
+----------------------------------------------------------------------------------------------------
+
+    Picotron is a cartridge-orientated workstation. A cartridge is like an application bundle, or a 
+    project folder: it is a collection of Lua source code files, graphics, audio and any other data 
+    files the cartridge needs to run. The "present working cartridge" is always in a RAM folder 
+    named /ram/cart.
+
+    Click on the code editor workspace at top right, which looks like this: ()
+
+    Paste in a program (select here, CTRL-C, and then CTRL-V inside Picotron)
+
+    function _init()
+      bunny =
+    --[[pod_type="gfx"]]unpod("b64:bHo0AEIAAABZAAAA-wpweHUAQyAQEAQgF1AXQDcwNzAHHxcHMAceBAAHc7cwFwFnAQcGAPAJZx8OJ0CXcF8dkFeQFy4HkBcuB5AXEBdA")
+      x = 232
+      y = 127
+    end
+     
+    function _draw()
+      cls(3)   -- clear the screen to colour 3 (green)
+      rrectfill(x+2,y+15,12,4,1,19) -- draw a 12x4 px shadow with colour 19 (dark green)
+      spr(bunny, x, y + (x/8%2), hflip) -- draw bunny; (x/8%2) is for hopping motion
+    end
+     
+    function _update()
+      if (btn(0)) x -= 2 hflip = true
+      if (btn(1)) x += 2 hflip = false
+      if (btn(2)) y -= 2
+      if (btn(3)) y += 2
+    end
+
+    Now, press CTRL-R to run it. CTRL-R runs whatever is in /ram/cart, and the entry point in the 
+    cartridge is always main.lua (the file you were editing).
+
+    After hopping around with the cursor keys, press ESCAPE to halt the program and then  ESCAPE 
+    once more to get back to the code editor.
+
+    There is a lot going on here! The _init() function is always called once when the program 
+    starts, and here it creates an image stored as text (a "pod") and sets  the bunny's initial x,y 
+    position.
+
+    _draw() is called whenever a frame is drawn (at 60fps or 30fps if there isn't enough available 
+    cpu). There are some comments in the _draw function that explain what is happening; everything 
+    after "--" on each line is not part of the program.
+
+    _update() is always called at 60fps, so is a good place to put code that updates the world at a 
+    consistent speed. In this example, it looks for button presses @btn() to control the bunny's 
+    position.
+
+    Each line of the program is run in order. Try swapping the rrectfill and spr lines to draw the 
+    shadow after drawing the bunny, to see what happens. Also, try removing the cls(3) and running 
+    the program again to see why it is important!
+
+----------------------------------------------------------------------------------------------------
+Adding Graphics
+----------------------------------------------------------------------------------------------------
+
+    Normally graphics are stored in .gfx files included in the cartridge as gfx/*.gfx
+
+    Lets get rid of the "bunny" variable and use the sprite editor instead. Click on the second 
+    workspace, which already has gfx/0.gfx open by default, and scribble something.
+
+    Now, instead of drawing the "bunny" image, the index of the new sprite can be used instead:
+
+    spr(1, x, y, hflip) -- hflip controls horizontal flipping
+
+    Hit CTRL-R to run the cartridge, and the new sprite should be visible.
+
+    :: Drawing a Map
+
+    The @{Map Editor} works the same way: map/0.map is loaded by default, and uses the sprites in 
+    0.gfx. First, draw some tiles in the sprite editor (e.g. a flower or plant). Next, click on the 
+    map  workspace at the top right (next to the gfx workspace). The new tiles can now be placed in 
+    the map.  Hold down SPACE and click and drag to pan around.
+
+    Finally, the map can be drawn inside the _draw callback using @map(). Add it after the cls(3):
+
+    cls(3)
+    map()
+
+    To adjust the draw position to keep the player centered, try using camera() at the start of 
+    _draw():
+
+    camera(x - 240, y - 135)
+
+    To create more complex words with multiple map files and layers and sprite banks, see the @{Map 
+    Editor}, @Map api and @{Sprite Indexes}.
+
+----------------------------------------------------------------------------------------------------
+Adding Sound and Music
+----------------------------------------------------------------------------------------------------
+
+    To create a sound effect, open the SFX workspace (the musical notes icon at the top right) and 
+    scribble in the PITCH area. Press SPACE to play and once again to stop the current sfx.
+
+    The default speed ("SPD") is 16, which is good for playing tunes, but try something faster (1 ~ 
+    4 ticks per row) for creating  sound effects. Adjust the SPD value (at the top right) by 
+    clicking and dragging it or by using the mousewheel while hovering over the value.
+
+    The new sound effect can now be played wile the cart is running using the @sfx() function. Try 
+    the following at the end of _update to  play the sound when the X button is pressed:
+
+    if (btnp(5)) sfx(0)
+
+    To load and play a separate .sfx file as music, see @music() for an example.
+
+----------------------------------------------------------------------------------------------------
+Adding Code Tabs
+----------------------------------------------------------------------------------------------------
+
+    Multiple code tabs can be created by making a lua file for each one. Click on the [+] tab 
+    button near the top and type in a  name for the new file (a .lua extension will be added 
+    automatically if needed), and then include them at the top of your  main.lua program:
+
+    include "title.lua"
+    include "monster.lua"
+    include "math.lua"
+
+    The filename is relative to the present working directory, which starts as the directory a 
+    program is run from (e.g. /ram/cart).
+
+----------------------------------------------------------------------------------------------------
+Saving a Cartridge
+----------------------------------------------------------------------------------------------------
+
+    To save a cartridge to disk, open a terminal from the picotron menu (top left), and type:
+
+    save mycart.p64
+
+    (or just "save mycart" ~ the .p64 extension will be added automatically)
+
+    The save command simply copies the contents of /ram/cart to mycart.p64.
+
+    Once a cartridge has been saved, the filename is set as the "present working cartridge", and 
+    subsequent saves can be issued with the shortcut: CTRL-S. To get information about the current 
+    cartridge, type "info" at the terminal prompt.
+
+    When editing code and graphics files inside a cartridge, those individual files are  
+    "auto-saved" to /ram/cart so that CTRL-R will run the current version; there's no need to save 
+    before each run to sync changes.
+
+    When using an editor to edit a file that is outside /ram/cart (e.g. /desktop/todo.txt), CTRL-S 
+    saves only that individual file. Otherwise, CTRL-S always saves the whole cartridge.
+
+----------------------------------------------------------------------------------------------------
+Terminal Commands
+----------------------------------------------------------------------------------------------------
+
+    Some handy commands: // "directory" means "folder"
+
+    ls           list the current directory
+    cd foo       change directory (e.g. cd /desktop)
+    mkdir foo    create a directory 
+    folder       open the current directory in your Host OS
+    open .       open the current directory in filenav
+    open fn      open a file with an associated editor
+    rm filename  remove a file or directory (be careful!)
+    cp f0 f1     copy file / directory f0 to f1
+    mv f0 f1     move file / directory f0 to f1
+    info         information about the current cartridge
+    load cart    load a cartridge into /ram/cart
+    save cart    save a cartridge 
+
+    To create your own commands, see: @Custom_Commands
+
+----------------------------------------------------------------------------------------------------
+Uploading a Cartridge to the BBS
+----------------------------------------------------------------------------------------------------
+
+    Cartridges can be shared on the lexaloffle BBS: 
+
+    https://www.lexaloffle.com/bbs/?cat=8
+
+    First, capture a label while your cart is running with CTRL-7. For windowed programs, the label 
+    will include a screenshot of your desktop, so make sure you don't have anything personal lying 
+    around!
+
+    You can give the cartridge some metadata (title, version, author, notes) using about:
+
+    > about /ram/cart
+
+    Hit CTRL-S to save the changes made to the label and metadata.
+
+    Then make a copy of your cartridge in .p64.png format just by copying it:
+
+    > cp mycart.p64 releaseable.p64.png
+
+    The label will be printed on the front along with the title, author and version metadata if it 
+    exists.  You can check the output by opening the folder you saved to, and then double clicking 
+    on releaseable.p64.png (it is just a regular png)
+
+    > folder
+
+    Finally, go to https://www.lexaloffle.com/picotron.php?page=submit to upload the cartridge. 
+    Cartridges are not publicly listed until a BBS post has been made including the cartridge.
+
+----------------------------------------------------------------------------------------------------
+Browsing BBS Cartridges
+----------------------------------------------------------------------------------------------------
+
+    Cartridges can be browsed using the bbs:// protocol from within filenav. In the Picotron menu 
+    (top left) there is an item "BBS Carts" that opens bbs:// in the root folder.
+
+    Cartridges can alternative be loaded directly from the BBS using the cartridge id:
+
+    > load #cart_id     --  same as load bbs://cart_id.p64
+
+    A specific version of the cart can be specified with the revision suffix:
+
+    > load #cart_id-0.p64	
+
+    They can also be run as if they are a local file:
+
+    > bbs://cart_id.p64
+
+    BBS Cartridges are all run sandboxed by default, which means they are only allowed to write to 
+    their own folder in /appdata/bbs/cart_id, among other limitations. To give a BBS cart (that you 
+    trust!) access to the entire Picotron drive, it can be loaded with  the -u switch:
+
+    > load -u #cart_id    
+
+====================================================================================================
+    Customising your Machine
+====================================================================================================
+
+----------------------------------------------------------------------------------------------------
+Drive Storage
+----------------------------------------------------------------------------------------------------
+
+    The first time Picotron is run, it will automatically create a configuration file that 
+    specifies where to store files if one does not already exist:
+
+    Windows: C:/Users/Yourname/AppData/Roaming/Picotron/picotron_config.txt
+    OSX:     /Users/Yourname/Library/Application Support/Picotron/picotron_config.txt
+    Linux:   ~/.lexaloffle/Picotron/picotron_config.txt
+
+    The default configuration:
+
+    mount / C:/Users/Yourname/AppData/Roaming/Picotron/drive
+
+    From inside Picotron, any folder in the file navigator can be opened in a regular non-Picotron 
+    file browser with "View in Host OS", or by typing "folder" from terminal.  Picotron's filenav 
+    gui is a work in progress, so you might want to do any complex file management from the host  
+    OS for now!
+
+----------------------------------------------------------------------------------------------------
+Desktop Customisation
+----------------------------------------------------------------------------------------------------
+
+Open the system settings via the Picotron menu (top left) or by typing "settings" at the prompt.
+
+To create your own lists of themes, wallpapers and screensavers, create the following folders:
+
+    /appdata/system/themes
+    /appdata/system/wallpapers
+    /appdata/system/screensavers
+
+Wallpapers and screensavers are regular .p64 cartridges -- you can copy anything in there that runs 
+in fullscreen.
+
+Widgets are programs that run in the slide-out tooltray (pull the toolbar down from the top), and 
+are windowed programs that are not moveable and do not have a frame. To install a widget, first run 
+it as a windowed program, adjust the window size to your liking (if it resizeable),  and then drag 
+and drop it into the tooltray. The widget will now be re-launched every time  Picotron boots. 
+Running BBS apps can be installed directly in the tooltray -- there is no need  to make a local 
+copy first.
+
+Right-click a widget to pop in back out as a window, or to remove it.
+
+----------------------------------------------------------------------------------------------------
+Custom Commands
+----------------------------------------------------------------------------------------------------
+
+    To create your own terminal commands, put .p64 or .lua files in /appdata/system/util.
+
+    When a command is used from commandline (e.g. "ls"), terminal first looks for it in 
+    /system/util and /system/apps, before looking in /appdata/system/util and finally the current 
+    directory for a matching .lua or .p64 file.
+
+    The present working directory when a program starts is the same directory as the program's 
+    entry point (e.g. where main.lua is, or where the stand-alone lua file is). This is normally 
+    not desireable for commandline programs, which can instead change to the directory the command 
+    was issued from using env().path. For example:
+
+    cd(env().path)
+    print("args: "..pod(env().argv))
+    print("pwd: "..pwd())
+
+    Save it as /appdata/system/util/foo.lua, and then run it from anywhere by typing "foo".
+
+----------------------------------------------------------------------------------------------------
+Keyboard Layout
+----------------------------------------------------------------------------------------------------
+
+    Text input (using @peektext() / @readtext()) defaults to the host OS keyboard layout / text 
+    entry method.
+
+    Key states used for things like CTRL-key shortcuts (e.g. @key("ctrl") and @keyp("c")) are also 
+    mapped  to the host OS keyboard layout by default, but can be further configured by creating a 
+    file called  /appdata/system/keycodes.pod which assigns each keyname to a new scancode. The raw 
+    names of keys  (same as US layout) can alternatively be used on the RHS of each assignment, as 
+    shown in this example  that patches a US layout with AZERTY mappings:
+
+    store("/appdata/system/keycodes.pod", {a="q",z="w",q="a",w="z",m=";",[";"]=",",[","]="m"})
+
+    Note: you probably do not need need to do this! The default layout should work in most cases. 
+    Raw scancodes themselves can also be remapped in a similar way using 
+    /appdata/system/scancodes.pod, but is also normally not needed. The raw mapping is used in 
+    situations where the physical location  of the key matters, such as the piano-like keyboard 
+    layout in the tracker. See /system/lib/events.lua  for more details.
+
+----------------------------------------------------------------------------------------------------
+ Defaults Apps
+----------------------------------------------------------------------------------------------------
+
+    When opening a file via filenav or the open command, an application to open it with is selected 
+    based on the extension. To change or add the default application for an extension, use the 
+    default_app command. The following will associate files ending with ".sparkle" with the program 
+    "/apps/tools/sparklepaint.p64":
+
+    default_app sparkle /apps/tools/sparklepaint.p64
+
+    The table of associations is stored in: /appdata/system/default_apps.pod. Delete that file to  
+    reset to defaults, or reset a particular extension to default with:
+
+    default_app lua
+
+    :: Using Sandboxed Tools
+
+    Although bbs:// carts always run sandboxed, they can be set as default apps with little 
+    practical difference.  They do not need to be "installed" locally, and are cached forever for 
+    offline use. For example, to use Strawberry Src as the default app for txt files:
+
+    default_app txt #strawberry_src
+
+    (this is short for: default_app txt bbs://strawberry_src.p64)
+
+    BBS carts can still be used to access any file on the drive when there is clear intent: via the 
+    filenav file  chooser, when loading/saving carts, or when using the open command. In each of 
+    these cases, the sandoxed view of the file system is expanded to include the requested file(s). 
+    For more technical details, see @{File Sandboxing}.
+
+    The advantages of using BBS carts directly without unsandboxing them:
+
+    1. They do not need to be as trusted. BBS carts can do limited damage to your system *
+    2. The latest version is always used (when no version number is given)
+    3. They don't take any space on your picotron drive (but are cached for offline use).
+    4. Files authored with a BBS cart are automatically associated with that tool +
+
+    * Editors for lua files are a special case; tools that edit e.g. /ram/cart/main.lua could 
+    maliciously  inject arbitrary code that is then run unsandboxed. But the risk only extends to 
+    anything mounted inside  the Picotron drive.
+
+    + When a bbs:// cartridge is used to create or edit a file, the location of that cartridge is 
+    stored in the file's metadata as metadata.prog. When a default app can not be found to open a 
+    file, metadata.prog is used instead when it is available.
+
+----------------------------------------------------------------------------------------------------
+ Commandline Parameters
+----------------------------------------------------------------------------------------------------
+
+    When running Picotron from the host commandline (e.g. from a linux terminal), there are 
+    additional settings that can be applied for that session.
+
+    picotron -home myhome
+
+    This sets the home path for Picotron data stored on the host, instead of the default paths 
+    listed in @Drive Storage.
+
+    Files like picotron_config.txt and the default drive/ are created inside that folder and used 
+    for the duration of that session. This can be useful for setting up multiple Picotron 
+    configurations (e.g. one configuration for  each student who uses Picotron over a network).
+
+    picotron -x foo.lua
+
+    Runs a lua file or p64 cartridge in headless mode.
+
+    On boot, only the given file is run as a single userland process. The file does not need to  be 
+    inside the picotron drive (it is copied to /ram and used from there), but all file operations  
+    remain inside the picotron drive as usual.
+
+    No host window is created, but it is still possible to internally create a display and draw to 
+    it as usual. print() calls are directed to the host terminal until a display is created,  after 
+    which only printh() can be used.
+
+====================================================================================================
+    Anywhen
+====================================================================================================
+
+    Anywhen is a tool for viewing the state of cartridges, files and folders at any point in time.
+
+    When a file is modified inside Picotron, the file system records a delta between the  previous 
+    version on disk and the new version being written. This allows changes to be  listed and viewed 
+    at exactly the moment they happened.
+
+    Past versions of a file are not stored inside the file itself, but in a separate read-only 
+    storage area outside of the Picotron drive (See @{Picotron Storage}).
+
+    Anywhen logging can be disabled in settings by un-checking the Anywhen checkbox in settings. 
+    While disabled, file changes will not be recorded (but past changes are still accessible).
+
+    Anywhen paths (that contain "/@/") are not visible to sandboxed cartridges.
+
+----------------------------------------------------------------------------------------------------
+Anywhen Paths
+----------------------------------------------------------------------------------------------------
+
+    Paths on the local drive can be appened with "/@/" to access a list of days that the path 
+    changed (yyyy-mm-dd), and a version of that file or folder at each point in time 
+    (hh:mm:ss.ext). All times are GMT.
+
+    For example, a cartridge sitting on the desktop that had changes saved in April and June might 
+    look like this:
+
+    > ls /desktop/mycart.p64/@
+    2025-04-19
+    2025-04-24
+    2025-06-11
+
+    Inside each day folder is a collection cartridges: one for each moment in time the cartridge 
+    was modified:
+
+    >ls /desktop/mycart.p64/@/2025-04-19
+    09:23:55.p64
+    11:40:23.p64
+
+    Each item can be run directly, loaded or explored as if it were a regular cartridge. The same 
+    works for separate files. For example, to view a text file as it was at a particular point in 
+    time:
+
+    > edit /desktop/todo.txt/@/2025-01-01/00:00:00.txt
+
+    Anywhen paths include ":" character to make times more readable, but _ can be used instead. 
+    Local file paths do not support :, so _ is used when e.g. copying a file from the past into the 
+    present:
+
+    > cp /desktop/todo.txt/@/2025-01-01/00:00:00.txt .
+    > ls
+    00_00_00.txt
+
+    Folders can also be viewed at any time. A "change" to the folder is marked when the folder was 
+    created or an item was added to it.
+
+    To view all version of /desktop in filenav:
+
+    > open /desktop/@
+
+:: Logging And Access Rules
+
+    Anywhen only stores changes made to files from within Picotron; it does not proactively look 
+    for changes made in external editors except when generating the first log file per day.  Also, 
+    it only stores changes made to files saved to disk, and not to /ram.
+
+    Changes made to paths that include ".bin" are never recored to save space (binary exports are  
+    very large compared with typical Picotron files, and normally do not need to be logged).
+
+    Anywhen paths are not available to sandboxed cartridges
+
+----------------------------------------------------------------------------------------------------
+Anywhen Storage
+----------------------------------------------------------------------------------------------------
+
+    The modification history is stored outside of the Picotron drive, and can be managed in the 
+    host  OS if desired. The default storage location is in the same folder as picotron_config.txt: 
+    use "folder /" to open the drive in the Host OS, and go up one folder.
+
+    Change logs are organised by month, and it is safe to remove a month folder (e.g. "2024-09") if 
+    it is no longer needed. Doing so means that any changes made during that month will no longer 
+    be visible, but the rest of the history will work as normal.
+
+    Newer versions of Picotron (from 0.2.0i) store binary blobs in a shared folder called 
+    "anywhen/blob",  which is shared between all months to avoid redundancy and save space. These 
+    are currently not possible to be removed by month, but a tool to sweep "dangling blob 
+    references" will be available in the future.
+
+====================================================================================================
+Cartridge Exporters
+====================================================================================================
+
+----------------------------------------------------------------------------------------------------
+Exporting a PNG
+----------------------------------------------------------------------------------------------------
+
+    To save a copy of the currently loaded cartridge in .p64.png format (without making it the new 
+    working cartridge), press ctrl-7 while running the cartridge to capture a label and then:
+
+    > export foo.p64.png
+
+    Cartridges in .p64.png format can have up to 256k of (compressed) rom data, and can be shared 
+    on the Lexaloffle BBS.
+
+----------------------------------------------------------------------------------------------------
+Exporting HTML
+----------------------------------------------------------------------------------------------------
+
+    Cartridges can be exported and shared as stand-alone html pages.
+
+    To export the currently loaded cartridge as a single file:
+
+    > export foo.html
+
+    View the page by opening the folder and double clicking on it:
+
+    > folder
+
+:: HTML Export Size Limit
+
+    The html exporter can handle carts that are up to 8MB in .p64.rom format (use "info" command to 
+    check).  Beyond that size, fetch() can be used to download more data as needed using stat(151) 
+    to prepend the host  and path the page is being served from: fetch(stat(151).."level2.pod").
+
+----------------------------------------------------------------------------------------------------
+Exporting Binary Executables
+----------------------------------------------------------------------------------------------------
+
+    Binaries for Windows, Mac and Linux can be generated by exporting to a .bin folder:
+
+    > export foo.bin
+
+    A folder for each platform is generated for testing, along with zip files that are ready to 
+    distribute. It is recommended to distribute the zip files as-is instead of re-packing them, 
+    because they include file attribute bits that are set on the executable files when unzipped. 
+    For example, it is possible  to export from a Windows dev machine, and then a linux user can 
+    unzip and run the cart without needing  to "chmod +x thegame".
+
+:: Icons
+
+    The cartridge's 16x16 icon is used as the host file and window icon if one exists. Colour 0 is 
+    always taken to be transparent, and every other colour index is solid.
+
+:: Extra Files
+
+    Bundle files in the .zip output with -e:
+
+    > cart -e readme.txt foo.bin
+
+    When a folder is given instead of a file, the contents of that folder are flattened and saved 
+    in the root of the zip.
+
+    To remove the metadata section of a text file so that it looks nicer outside of Picotron:
+
+    > store_metadata("foo.txt",{metadata_format="none"})
+
+:: Storing Data from a Binary Export
+
+    store() data somewhere in "/appdata/mygame" as usual, and it will be persisted on the end 
+    user's machine. Exports use a separate home data folder on host so that they don't  
+    accidentally interfere with any regular Picotron installations. Instead of a home path  (in 
+    linux) of:
+
+    ~/.lexaloffle/Picotron
+
+    Exports by default all use:
+
+    ~/.lexaloffle/Picotron/exp/shared
+
+    This means that exports can still read and write each other's /desktop, settings and other 
+    files. That is usually not a problem (and is sometimes desirable), but if additional  
+    separation is needed, add "export_home" to the cart's metadata:
+
+    > store_metadata("/ram/cart", {export_home = "my_game_name"}) 
+
+    The exported cartridge will then have its own isolated home path, and can do things like mess 
+    up /desktop with low risk of interfering with other exports:
+
+    ~/.lexaloffle/Picotron/exp/my_game_name
+
+    By using export_home, and bundling .p64.rom files inside the exported cartridge, it is possible 
+    to create software that uses the Picotron desktop environment. For example, suites of tools 
+    that boot up into their own customised desktop environments, or UI  story games that come with 
+    a desktop already populated with files and widgets.
+
+:: Binary Export Size Limit
+
+    The binary exporter can handle carts that are up to 32MB in .p64.rom format (use "info" command 
+    to check). After exporting, additional data can also be stored in a folder called "data" in the  
+    same path as the executable. When this path exists, it is automatically mounted as "/host_data" 
+    on boot.
+
+    Note that the data/ folder is not automatically bundled into the distributable zip files, so 
+    for exports that need > 32MB of data, some extra work is needed to create distributables.
+
+----------------------------------------------------------------------------------------------------
+Cartridge Exporter Limitations
+----------------------------------------------------------------------------------------------------
+
+    1. Exported cartridges can not load and run other cartridges that were not part of the export.
+
+    The exporters are targetted at authors wishing to export and distribute their own work, and 
+    this  limitation aims to reduce unwanted exploitation of the Picotron ecosystem.
+
+    It is still possible to bundle many .p64.rom cartridges together inside an export and run them 
+    with  create_process(); just make sure you have permission from all of the included 
+    cartridges\' authors first.
+
+    2. When exporting fullscreen cartridges, the user can not access the Picotron desktop, 
+    terminal, or other parts of the system. To enable escaping the fullscreen workspace using 
+    alt+L/R or  Ctrl-P: create the window with can_escape_fullscreen set to true: 
+
+    window{can_escape_fullscreen = true}
+
+    3. bbs:// can not be used from exported cartridges.
+
+    4. widgets, themes, screensavers and wallpapers are not loaded on boot, and are not selectable  
+    in the settings app from exported cartridges. This is to avoid exports that use the same 
+    default  exp/shared/ data from interfering with each other, including producing runtime version 
+    vs. cart  version mismatches. Instead, a cart can optionally customise its own desktop each 
+    time it is run.
+
+====================================================================================================
+Code Editor
+====================================================================================================
+
+    The code editor is open on boot in the first workspace, defaulting to /ram/cart/main.lua.
+
+    Like all of the standard tools, it runs in a tabbed workspace, where each tab is a  separate 
+    process editing a single file.
+
+    To open or create a file in the editor from terminal:
+
+    > code foo.lua
+
+    :: Keys
+
+    Hold shift    Select (or click and drag with mouse)
+    CTRL-X,C,V    Cut copy or paste selected
+    CTRL-Z,Y      Undo, redo
+    CTRL-F        Search for text in the current tab
+    CTRL-L        Jump to a line number
+    CTRL-W,E      Jump to start or end of current line
+    CTRL-D        Duplicate current line
+    TAB           Indent a selection (SHIFT-TAB to un-indent)
+    CTRL-B        Comment / uncomment selected block
+    SHIFT-ENTER   To automatically add block end and indent
+    CTRL-UP/DOWN  Jump to start or end of file (same as CTRL-HOME/END)
+    CTRL-CURSORS  Jump left or right by word
+
+----------------------------------------------------------------------------------------------------
+Embedding Images
+----------------------------------------------------------------------------------------------------
+
+    The code editor can render gfx pod snippets (e.g. copied from the gfx editor) embedded in the 
+    code. See /system/demos/carpet.p64 for an example of a diagram pasted into the source code.
+
+    Those snippets contain a header string using block comments "--[[pod_type=gfx]]", so can not 
+    appear inside the same style of block comments. Instead, use a different block comment form; 
+    Lua allows nesting comments by including some matching  number of ='s between the square 
+    brackets. e.g. [=[...]=]  or  [==[...]==]
+
+    --[==[
+    a picture:
+    --[[pod_type="gfx"]]unpod("b64:bHo0AC4AAABGAAAA-wNweHUAQyAQEAQQLFAsIEwwTBAEAAUR3AIAUxwBfAEcBgCg3CBMEUxAPBE8IA==")
+    ]==]
+
+----------------------------------------------------------------------------------------------------
+Using External Editors
+----------------------------------------------------------------------------------------------------
+
+    The simplest way to use a text editor outside of Picotron to edit a cartridge's .lua files is 
+    to copy them into the  cartridge every time it is run, and then to @include() them. For 
+    example, at the top of main.lua:
+
+    -- main.lua in the cart's root folder --
+    cp("/myproj/src", ".") -- comment this line out before releasing
+    include("src/draw.lua") -- a copy of the file that is in the same folder as the cartridge
+
+    src/ is a regular folder on host that can be opened with the folder command and populated with 
+    .lua files using any text editor.
+
+    An advantage of this approach is that the cartridge remains self-contained, and if the first 
+    line is accidentally left in it will still run fine from the bbs (the cp() will just silently 
+    fail while running sandboxed).
+
+    As a general rule, released Picotron cartridges should be self-contained and not depend on 
+    anything except for /system.
+
+    :: Direct Includes
+
+    A slightly riskier alternative is to include .lua files directly from outside of the cartridge 
+    during development,  in which case care should be taken when releasing it to copy them 
+    somewhere inside the cart, and to adjust the include  path accordingly:
+
+    -- main.lua in the cart's root folder --
+    cd("/myproj")              -- comment before releasing (to start in the cart's path)
+    include("src/draw.lua")    -- /myproj/src/draw.lua during development
+    include("src/monster.lua") -- /myproj/src/monster.lua
+
+    In that case, manually copy the source files before releasing. From terminal:
+
+    > cp -f /myproj/src /ram/cart/src
+    > save
+
+    When a cartridge is run, the present working directory for that process always starts in the 
+    root of the cart. To record that path, use "cart_root = pwd()" before cd("/myproj"), for 
+    example to load some .map files later in the program that are bundled inside the cart: m = 
+    fetch(cart_root.."/map/forest.map")
+
+    :: Editing .p64 Files Directly
+
+    A third approach is to edit the .p64 file directly with a text editor. 
+
+    From 0.2.1c, ctrl-r looks for external changes in the cartridge file and copies only the files 
+    that have changed (so as to not clobber other files that were edited inside the picotron 
+    editors). To check which files inside the currently loaded cartridges have changed in the .p64 
+    file on disk, use the info command.
+
+    When editing a .p64 file directly, the binary data files (.pogfx etc) are all stored at the 
+    end, and should be left unmodified so that the cartridge format remains valid.
+
+====================================================================================================
+GFX Editor
+====================================================================================================
+
+The second workspace is a sprite and general-purpose image editor. Each .gfx file contains up to 
+256 sprites,  and if the filename starts with a number (like "gfx/0.gfx"), they are automatically 
+assigned @{Sprite Indexes} when the cartridge is run.
+
+Don't forget to save your cartridge after drawing something -- the default filenames all point to 
+/ram/cart and isn't actually stored to disk until you use the save command (or CTRL-S to save the 
+current cartridge)
+
+----------------------------------------------------------------------------------------------------
+GFX Controls
+----------------------------------------------------------------------------------------------------
+
+    SPACE       Shortcut for the pan tool 
+    MOUSEWHEEL  To zoom in and out
+    S           Shortcut for the select tool (hold down)
+    CTRL-A      Select all
+    ENTER       Select none
+    CURSORS     Move selection
+    BACKSPACE   Delete selection
+    CTRL-C      Copy selection
+    CTRL-V      Paste to current sprite
+    CTRL-B      Paste big (2x2)
+    TAB         Toggle RH pane
+    -,+         Navigate sprites
+    1,2         Navigate colours
+    RMB         Pick up colour
+    F/V         Flip selection horizontally or vertically
+
+----------------------------------------------------------------------------------------------------
+GFX Tools
+----------------------------------------------------------------------------------------------------
+
+    The drawing tools can be selected using icons under the palette:
+
+    PENCIL   Draw single pixels
+    BRUSH    Draw using a fill pattern and brush shape
+    LINE     Draw a line      // SHIFT to snap closest axis, diagonal, or 2:1 slope
+    RECT     Draw a rectange  // SHIFT to snap to a square
+    ELLIPSE  Draw an elipse   // SHIFT to snap to a circle
+    BUCKET   Fill an area
+    STAMP    Stamp a copy of the clipboard at the cursor
+    SELECT   Select a rectangular region; press Enter to remove
+    PAN      Change the camera position
+     
+    RECT and ELLIPSE tools can be drawn filled by holding CTRL
+
+----------------------------------------------------------------------------------------------------
+Multiple Sprite Selections
+----------------------------------------------------------------------------------------------------
+
+    To select multiple sprites at once, hold shift and click and drag in the navigator. Resizing 
+    and modifying sprite flags apply to all sprites in that region.
+
+    Each sprite has its own undo stack. Operations that modify more than one sprite at once (paste 
+    multiple, batch resize) create a checkpoint in each individual undo stack, and can only be 
+    undone once (ctrl-z) as a group immediately after the operation.
+
+----------------------------------------------------------------------------------------------------
+Importing Spritesheets
+----------------------------------------------------------------------------------------------------
+
+    From the app menu (top left), choose "Spritesheet Importer" and either drag and drop a png 
+    file, or paste an image that was copied from PICO-8 or Picotron. To select the 128x128 entire 
+    spritesheet in PICO-8, press CTRL-C twice.
+
+    There are a few manual options that can be adjusted: the size (in pixels) of each tile, the 
+    sprite index that the  imported sprites should start at, and "trim" removes that number of 
+    pixels from the right and bottom of each sprite (allowing the spritesheet to have a bit of 
+    empty space between each sprite).
+
+    Spritesheets are colour-fitted to the current display palette.
+
+    Once hitting "Slice and Dice", it is possible to undo just once. After that, undo can still be 
+    used on each sprite's separate undo stack.
+
+====================================================================================================
+Map Editor
+====================================================================================================
+
+    The map editor uses similar shortcuts to the @{GFX Editor}, with a few changes in meaning.
+
+    The F, V and R keys flip and rotate selected tiles, by setting special bits on those tiles that 
+    are also observed by the @map() drawing function.
+
+    To select a single tile (e.g. to flip it), use the picker tool (crosshair icon) or hold S  for 
+    the section tool and use right mouse button. For larger selections, hold S and click and drag 
+    with either mouse button. When there is no selection (press ENTER to de-deselect), F, V, R can  
+    also be used to set the bits on the curret item before it is placed.
+
+    Sprites can be selected from any files in gfx/ that start with a number and thus assigned 
+    @{Sprite Indexes}.  Use the left and right arrow buttons above the sprite navigator to switch 
+    between gfx files.
+
+    Sprite 0 means "empty", and that tile is not drawn. The default sprite 0 is a small white x to 
+    indicate that it is reserved with that special meaning. This can be disabled; see @map() for 
+    notes.
+
+----------------------------------------------------------------------------------------------------
+Map Layers
+----------------------------------------------------------------------------------------------------
+
+     @{Map Files} can contain multiple layers which are managed at the top right using the add 
+    layer ("+") button and the delete (skull icon) button. Currently only a single undo step is 
+    available when deleting layers, so be careful!
+
+    Layers can be re-ordered using the up and down arrow icon buttons, named using the pencil  icon 
+    button, and hidden using the toggle button that looks like an eye.
+
+    Each layer can have its own size, and is drawn in the map editor centered. See the @Map api for 
+    examples of loading and drawing multiple map files and layers.
+
+----------------------------------------------------------------------------------------------------
+Tile Sizes
+----------------------------------------------------------------------------------------------------
+
+    A global tile size is used for all layers of a map file, taken from the size of sprite 0. The 
+    width and height do not need to match.
+
+    Sprites that do not match the global tile size are still drawn, but stretched to fill the 
+    target size using something equivalent to a @sspr() call.
+
+====================================================================================================
+SFX Editor
+====================================================================================================
+
+The SFX editor can be used to create instruments, sound effects (SFX), and music (SFX arranged into 
+"patterns").
+
+Each of these has their own editing mode that can be switched between by pressing TAB, or by 
+clicking on the relevant navigator header on the left. Instruments can also be edited by 
+CTRL-clicking on them, and SFX and pattern items always jump to their editing modes when clicked.
+
+In the SFX and pattern editing modes, press SPACE to play the current SFX or pattern, and SPACE 
+again to stop it.
+
+Press CTRL+SPACE to play from the cursor position, or SHIFT+SPACE to play from the start of the 
+current group of 8 rows.
+
+See the @Audio API for examples of how to load and play SFX files.
+
+----------------------------------------------------------------------------------------------------
+Instrument Editor
+----------------------------------------------------------------------------------------------------
+
+    An instrument is a mini-synthesizer that generates sound each time a note is played. It is made 
+    from a tree of up to 8 nodes, each of which either generates, modifies or mixes an audio 
+    signal.
+
+    For example, a bass pluck instrument might have a white noise OSC node that fades out rapidly, 
+    plus a saw wave OSC node that fades out more slowly.
+
+    The default instrument is a simple triangle wave. To adjust the waveform used, click and drag 
+    the "WAVE" knob. In many cases this is all that is needed, but the instrument editor can 
+    produce a variety of sounds given some experimentation. Alternatively, check the BBS for some 
+    instruments that you can copy and paste to get started!
+
+:: Instrument Structure
+
+        The root node at the top is used to control general attributes of the instrument. It has an 
+        instrument name field (up to 16 chars), and toggle boxes RETRIG (reset every time it is 
+        played), and WIDE (give child nodes separate stereo outputs).
+
+        To add a node, use one of the buttons on the top right of the parent:
+
+        +OSC: Add an oscillator (sound generator) to the parent.
+        +MOD: Modulate the parent signal using either frequency modulation or ring modulation.
+        +FX:  Modify the parent signal with a FILTER, ECHO, or SHAPE effect.
+
+        An instrument that has two oscillators, each with their own FX applied to it before sending 
+        to the mix might look like this:
+
+        ROOT
+            OSC
+                FX:FILTER
+            OSC
+                FX:ECHO
+
+        During playback, the tree is evaluated from leaves to root. In this case, first the FX 
+        nodes are each applied to their parents,  and then the two OSCs are mixed together to 
+        produce the output signal for that instrument.
+
+        Sibling nodes (a group with the same parent) can be reordered using the up and down 
+        triangle buttons. When a node is moved, it brings  the whole sub-tree with it (e.g. if 
+        there is a filter attached to it, it will remain attached). Likewise, deleting a node will 
+        also  delete all of its children.
+
+:: Node Parameters
+
+        The parameters for each node (VOL, TUNE etc) can be adjusted by clicking and dragging the 
+        corresponding knob. Each knob has two  values that define a range used by @Envelopes; use 
+        the left and right mouse button to adjust the upper and lower bounds, and the  range 
+        between them will light up as a pink arc inside the knob.
+
+    :: Parameter Operators
+
+        Parameters can be evaluated relative to their parents. For example, a node might use a 
+        tuning one octave higher than its parent, in which case the TUNE will be "+ 12". The 
+        operator can be changed by clicking to cycle through the available operators for that knob: 
+        + means add, * means multiply by parent.
+
+    :: Parameter Multipliers
+
+        Below the numeric value of each knob there is a hidden multiplier button. Click it to cycle 
+        between *4, /4 and none. This can be used to alter the scale of that knobs's values. For 
+        example, using *4 on the BEND knob will give a range of -/+ 1 tone instead of -/+ 1/2 
+        semitone. There are more extreme multipliers available using CTRL-click (*16, *64), which 
+        can  produce extremely noisey results in some cases.
+
+    The default parameter space available in the instrument designer (without large multipliers) 
+    shouldn't produce anything too  harsh, but it is still possible to produce sounds that will 
+    damage your eardrums especially over long periods of time. Please  consider taking off your 
+    headphones and/or turning down the volume when experimenting with volatile sounds!
+
+:: Wide Instruments
+
+    By default, instruments are rendered to a mono buffer that is finally split and mixed to each 
+    stereo channel  based on panning position. To get stereo separation of voices within an 
+    instrument, WIDE mode can be used. It is a toggle button in the root node at the top of the 
+    instrument editor.
+
+    When WIDE mode is enabled, OSC nodes that are children of ROOT node have their own stereo 
+    buffers and  panning position. FX nodes that are attached to ROOT are also split into 2 
+    separate nodes during playback:  one to handle each channel. This can give a much richer sound 
+    and movement between channels, at the cost of such FX nodes costing double towards the channel 
+    maximum (8) and global maxmimum (64).
+
+----------------------------------------------------------------------------------------------------
+Instrument Nodes
+----------------------------------------------------------------------------------------------------
+
+:: OSC
+
+        There is only one type of oscillator (OSC), which reads data from a table of waveforms (a 
+        "wavetable"),  where each entry in the table stores a short looping waveform. Common 
+        waveforms such as sine wave  and square wave are all implemented in this way rather than 
+        having special dedicated oscillator types.
+
+        VOL    volume of a node's output
+        PAN    panning position
+        TUNE   pitch in semitones (48 is middle C)
+        BEND   fine pitch control (-,+ 1/2 semitone)
+        WAVE   position in wavetable. e.g. sin -> tri -> saw
+        PHASE  offset of wave sample
+
+        :: Generating Noise
+
+        Noise is also implemented as a wavetable containing a single entry of a random sample of 
+        noise. Every process starts with 64k of random numbers at 0xf78000 that is used to form 
+        WT-1. Click the wavetable index (WT-0) in the oscilloscope to cycle through the 4 
+        wavetables.  WT-2 and WT-3 are unused by default.
+
+        At higher pitches, the fact that the noise is a repeating loop is audible. A cheap way to 
+        add more variation is to set the BEND knob's range to -/+ maximum and then assign an 
+        envelope to it. An @LFO (freq:~40) or @DATA envelope (LP1:16, LERP:ON, scribble some noisey 
+        data points) both work well.
+
+:: FM MOD
+
+        A frequency modulator can be added to any oscillator. This produces a signal in the same 
+        way as a regular oscillator, but instead of sending the result to the mix, it is used to 
+        rapidly alter the  pitch of its parent OSC.
+
+        For example, a sine wave that is modulating its parent OSC at a low frequency will sound 
+        like vibrato (quickly bending the pitch up and down by 1/4 of a semitone or so). The volume 
+        of the FM MOD signal determines the maximum alteration of pitch in the parent.
+
+        As the modulating frequency (the TUNE of the FM:MOD) increases, the changes in pitch of the 
+        parent OSC are too fast to hear and are instead perceived as changes in timbre, or the 
+        "colour" of the sound.
+
+:: RING MOD
+
+        Similar to FM, but instead of modulating frequency, RING MOD modulates amplitude: the 
+        result of this oscillator is multiplied by its parent. At low frequencies, this is 
+        perceived as fluctuation in the parent's volume and gives a temelo-like effect.
+
+        // The name "ring" comes from the original implementation in analogue circuits, which uses 
+        a  ring of diodes.
+
+:: FILTER FX
+
+        The filter FX node can be used to filter low or high frequencies, or used in combination to 
+        keep only mid-range frequencies. Both LOW and HIGH knobs do nothing at 0, and remove all 
+        frequencies when set to maximum.
+
+        >		 
+        LOW    Low pass filter
+        HIGH   High pass filter
+        RES    Resonance for the LPF
+
+:: ECHO FX
+
+        Copy the signal back over itself from some time in the past, producing an echo effect. At 
+        very short DELAY values this can also be used to modify the timbre, giving a string or  
+        wind instrument feeling. At reasonably short delays (and layered with a second echo node) 
+        it can be used to approximate reverb.
+
+        DELAY  How far back to copy from; max is around 3/4 of a second
+        VOL    The relative volume of the duplicated siginal. 255 means no decay at all (!)
+
+        A global maximum of 16 echo nodes can be active at any one time. Echo only applies while 
+        the instrument is active; swtiching to a different instrument on a given channel resets the 
+        echo buffer.
+
+:: SHAPE FX
+
+        Modify the shape of the signal by running the amplitude through a gain function. This can 
+        be used to control clipping, or to produce distortion when a low CUT (and high MIX) value 
+        is used. CUT is an absolute value, so the response of the shape node is sensitive to the  
+        volume of the input signal.
+
+        GAIN   Multiply the amplitude
+        ELBOW  Controls the gradient above CUT. 64 means hard clip. > 64 for foldback!
+        CUT    The amplitude threshold above which shaping should take effect
+        MIX    Level of output back into the mix (64 == 1.0)
+
+----------------------------------------------------------------------------------------------------
+Envelopes
+----------------------------------------------------------------------------------------------------
+
+    Envelopes (on the right of the instrument designer) can be used to alter the value of a node 
+    parameter over time.  For example, an oscillator might start out producing a triangle wave and 
+    then soften into a sine wave over 1 second.  This is achieved by setting an upper and lower 
+    value for the WAVE knob (see @Node_Parameters), and then assigning an evelope  that moves the 
+    parameter within that range over time.
+
+    To assign an envelope to a particular node parameter, drag the "ENV-n" label and drop it onto 
+    the knob. Once an envelope has been assigned, it will show up as a blue number on the right of 
+    the knob's numeric field.  Click again remove it, or right click it to toggle "continue" mode 
+    (three little dots) which means the envelope  is not reset each time the instrument is 
+    triggered.
+
+    When an envelope is evaluated, it takes the time in ticks from when the instrument started 
+    playing (or when it was retriggered), and returns a value from 0 to 1.0 which is then mapped to 
+    the knob's range of values.
+
+    Click on the type to cycle through the three types:
+
+:: ADSR
+
+    ADSR (Attack Decay Sustain Release) envelopes are a common way to describe the change in volume 
+    in response to a note being played, held and released.
+
+    When the note is played, the envelope ramps up from 0 to maximum and then falls back down to a 
+    "sustain" level which is used until the note is released, at which point it falls back down to 
+    0.
+
+    ............................. 255  knob max
+           /\
+          /  \
+         /    \______     ....... S    sustain level
+        /            \       
+       /              \
+    ../................\......... 0    knob min
+     
+      |-----|--|    |--|
+         A    D       R 
+
+    Attack:  How long to reach maximum. Larger values mean fade in slowly.
+    Decay:   How long to fall back down to sustain level
+    Sustain: Stay on this value while the note is held
+    Release: How long to fall down to 0 from current value after release
+
+    For a linear fade in over 8 ticks, use: 8 0 255 0
+
+    For a linear fade out over 8 ticks: 0 8 0 0
+
+    The duration values are not linear. 0..8 maps to 0..8 ticks, but after that the actual 
+    durations start jumping up faster. 128 means around 5.5 seconds and 255 means around 23 
+    seconds.
+
+:: LFO
+
+    Low frequency oscillator. Returns values from a sine wave with a given phase and frequency.
+
+    freq:     duration to repeat // 0 == track speed
+    phase:    phase offset
+
+:: DATA
+
+    A custom envelope shape defined by 16 values. Indexes that are out of range return 0.
+
+    LERP:    lerp smoothly between values instead of jumping
+    RND:     choose a random starting point between 0 and T0 (tick 0 .. T0*SPD-1)
+    SPD:     duration of each index // 0 == track speed
+    LP0:     loop back to this index (0..)
+    LP1:     loop back to LP0 just before reaching this index when note is held
+    T0:      starting index (when RND is not checked)
+
+    These attributes that control playback of data envelopes are also available to ADSR and LFO, 
+    accessible  via the fold-out button that looks like three grey dots.
+
+:: Random Values
+
+    This is not an envelope, but works in a similar way. Right clicking on an envelope button (to 
+    the right of the knob's numeric field) when no envelope is assigned toggles random mode. When 
+    this mode is active, a pink R is shown in that spot, and a random value within the knob's range 
+    is used every time the instrument is triggered. This can be used to produce chaotic unexpected 
+    sounds that change wildly on every playthrough, or subtle variation to things like drum hits 
+    and plucks for a more natural sound.
+
+----------------------------------------------------------------------------------------------------
+Track Editor
+----------------------------------------------------------------------------------------------------
+
+    A single track (or "SFX") is a sequence of up to 64 notes that can be played by the @sfx() 
+    function.
+
+    SFX can be be played slowly as part of a musical pattern, or more quickly to function as a 
+    sound effect.  The SPD parameter determines how many ticks (~1/120ths of a second) to play each 
+    row for.
+
+    Each row of a track has a pitch (C,C#,D..), instrument, volume, effect, and effect parameter. 
+    Instrument and  volume are written in hexadecimal (instrument "1f" means 31 in decimal). Volume 
+    0x40 (64) means 100% volume,  but larger values can be used.
+
+    The pitch, instrument and volume can each be set to "none" (internally: 0xff) by typing a dot 
+    ("."). This means that the channel state is not touched for that attribute, and the existing 
+    value carries over.
+
+    An instrument's playback state is reset (or "retriggered") each time the instrument index is 
+    set, and  either the pitch or instrument changes. When RETRIG flag is set on the instrument 
+    (node 0), only the instrument  attribute index to be set for it to retrigger, even if the pitch 
+    is the same as the previous row  (e.g. for a hihat played on every row at the same pitch).
+
+:: Pitch Entry
+
+    Notes can be entered using a workstation keyboard using a layout similar to a musical keyboard.  
+    For a QWERTY keyboard, the 12 notes C..B can be played with the following keys (the top row are 
+    the black keys):
+
+      2   3      5   6   7
+    Q   W   E  R   T   Y   U
+
+    An additional octave is also available lower down on the keyboard:
+
+      S   D      G   H   J
+    Z   X   C  V   B   N   M
+
+    Use these keys to preview an instrument, or to enter notes in the SFX or pattern editing modes.
+
+    Notes are played relative to the global octave (OCT) and volume (VOL) sliders at the top left.
+
+    Some instruments do not stop playing by themselves -- press SPACE in any editor mode to kill 
+    any active sound generation.
+
+:: Effects
+
+    Each effect command takes either a single 8-bit parameter or two 4-bit parameters.
+
+    PICO-8 effects 1..7 can be entered in the tracker using numbers, but are replaced with s, v, -, 
+    <, >, a and b respectively. The behaviour for those effects matches PICO-8 when  the parameter 
+    is 0x00 (for example, a-00 uses pitches from the row's group of 4).
+
+     s slide to pitch and volume (speed)
+     v vibrato (speed, depth)
+     - slide down from note (speed)
+     + slide up from note (speed)
+     > fade out (end_%, speed)
+     a fast arp: 4 ticks (pitch0, pitch1)
+     b slow arp: 8 ticks (pitch0, pitch1)
+     n nimble arp: 2 ticks (pitch0, pitch1)
+     o ornament (pitch0, ticks)
+     t tremelo (speed, depth)
+     w wibble (speed, depth) // v + t
+     r retrigger (every n ticks)
+     d delayed trigger (after n ticks)
+     c cut (after n ticks)
+     p set channel panning offset
+     f fade to volume (speed)
+     $ reserved for program use
+     
+
+    The meaning of "speed" varies, but higher is faster except for 0 which means "fit to track 
+    speed". For  example, a vibrato at speed 0 will repeat exactly once per row, and a slide at 
+    speed 0 will reach its  destination exactly in one row.
+
+    Non-zero speeds are applied per-tick and are not relative to the track speed. A single +10 
+    (slide up at speed 0x10)  command will rise one semitone every tick, and so playing at a slower 
+    track speed will cause the slide to reach a higher top pitch.
+
+    Arpeggio and ornament pitches are in number of semitones above the channel pitch. The following 
+    plays a c major triad (slow down the track to hear it more easily):
+
+    c 3 00 30 a47
+
+    Ornament pitches work the same way, but alternates between only two notes and uses the second 
+    parameter as a tick speed. When the ornament pitch offset is 0, silence is generated instead 
+    for those ticks. They can be used to implement things like trills, grace notes, swung accepts 
+    and other forms of articulation.
+
+    All of the arpeggio commands a,b,m,n,o have an uppercase counterpart (A,B,M,N,O) that behaves 
+    the same, except they are played downwards (the highest pitch is played first).
+
+    Slides and fades alter the channel's state; the altered values persist until they are modified 
+    by  another command. They can be used even when there is are no pitch or volume values on the 
+    same row; in that case they continue slide towards the last pitch / volume row values.
+
+    The slide command can also be used to fade to a volume when there is one set in the same row:
+
+    c 3 00 30 ...  -- play c 3 with instrument 0x00 at volume 0x30, with no effect
+    c 5 00 .. s20  -- start sliding towards c 5 at a speed of 0x20
+    ... .. .. s20  -- continue sliding towards c 5
+    ... .. 10 s20  -- slide to volume 10 for one row (and continue pitch slide)
+    ... .. .. ...  -- whatever pitch/vol is reached will continue playing
+
+----------------------------------------------------------------------------------------------------
+Pattern Editor
+----------------------------------------------------------------------------------------------------
+
+    A pattern is a group of up to 8 tracks that can be played with the @music() function.
+
+    Click on the toggle button for each track to activate it, and drag the value to select which 
+    SFX index to assign to it.
+
+    SFX items can also be dragged and dropped from the navigator on the left into the desired 
+    channel.
+
+    The toggle buttons at the top right of each pattern control playback flow, which is also 
+    observed by @music():
+
+    loop0 (right arrow): loop back to this pattern
+    loop1 (left arrow):  loop back to loop0 after finishing this pattern
+    stop  (square):      stop playing after this pattern has completed
+
+    Tracks within the same pattern have different can lengths and play at different speeds. The 
+    duration of the pattern is taken to be the duration (spd * length) of the left-most, 
+    non-looping track.
+
+====================================================================================================
+    Picotron Lua
+====================================================================================================
+
+    Picotron uses a slightly extended version of Lua 5.4, and most of the standard Lua libraries 
+    are available. For more details, or to find out about Lua, see www.lua.org.
+
+----------------------------------------------------------------------------------------------------
+    A Quick Introduction to Lua
+----------------------------------------------------------------------------------------------------
+
+    This section a primer for getting started with standard Lua syntax.
+
+:: Comments
+
+    -- use two dashes like this to write a comment
+    --[[ multi-line
+    comments ]]
+
+    To create nested multi-line comments, add a matching number of ='s between the opening and 
+    closing square brackets:
+
+    --[===[
+        --[[
+            this comment can appear inside another multi-line comment 
+        ]]
+    ]===]
+
+:: Types and assignment
+
+    Types in Lua are numbers, strings, booleans, tables, functions and nil:
+
+    num = 12/100
+    s = "this is a string"
+    b = false
+    t = {1,2,3}
+    f = function(a) print("a:"..a) end
+    n = nil
+
+    Numbers can be either doubles or 64-bit integers, and are converted automatically between the 
+    two when needed.
+
+:: Conditionals
+
+    A block of code can be executed when some condition is true, by using if {condition} then 
+    {code} end:
+
+    if (4 == 4) then print("equal") end
+    if (4 ~= 3) then print("not equal") end
+    if (4 <= 4) then print("less than or equal") end
+    if (4 > 3) then print("more than") end
+
+    Use "else" for code that should be executed when the condition is false:
+
+    if not b then
+        print("b is false")
+    else
+        print("b is not false")
+    end
+
+    "elseif" can be used when there is more than one conditional block:
+
+    if x == 0 then
+        print("x is 0")
+    elseif x < 0 then
+        print("x is negative")
+    else
+        print("x is positive")
+    end
+
+:: Loops
+
+    Loop ranges are inclusive:
+
+    -- print 1,2,3,4,5
+    for x=1,5 do
+        print(x)
+    end
+
+    The same with a while loop:
+
+    x = 1
+    while x <= 5 do
+        print(x)
+        x = x + 1
+    end
+
+    The default for loop step value is 1. To jump a different amount or to loop backwards:
+
+    for x = 1, 10, 3 do print(x) end   -- 1,4,7,10
+
+    for x = 5, 1, -2 do print(x) end   -- 5,3,1
+
+:: Functions and Local Variables
+
+    Variables declared as local are scoped to their containing block of code (for example, inside a 
+    function, for loop, or if then end statement).
+
+    y = 0 
+    function plusone(x)
+        local y = x
+        y = y + 1
+        return y
+    end
+    print(plusone(2)) -- 3
+    print(y)          -- still 0
+
+    Functions can take and return any number of values:
+
+    function swap(x, y)
+        return y, x
+    end
+    a,b = swap(1,2)
+    ?a -- 2
+    ?b -- 1
+
+:: Lua Tables
+
+    In Lua, tables are a collection of key-value pairs where the key and value types can both  be 
+    mixed. They can be used as arrays by indexing them with integers.
+
+    a={} -- create an empty table
+    a[1] = "blah"
+    a[2] = 42
+    a["foo"] = {1,2,3}
+
+    Arrays use 1-based indexing by default:
+
+    > a = {11,12,13,14}
+    > print(a[2]) -- 12
+
+    For a 0-based array, set the zeroth slot by providing an explicit index: (or use the 
+    @Userdata):
+
+    > a = {[0]=10,11,12,13,14}
+
+    Tables with 1-based integer indexes are special though. The length of such a table can be found  
+    with the # operator, and Picotron uses such arrays to implement @add, @del, @deli, @all and 
+    @foreach functions.
+
+    > print(#a)   -- 4
+    > add(a, 15)
+    > print(#a)   -- 5
+
+    Indexes that are strings can be written using dot notation
+
+    player = {}
+    player.x = 2 -- is equivalent to player["x"]
+    player.y = 3
+
+    See the @{Table_Functions} section for more details.
+
+----------------------------------------------------------------------------------------------------
+    Picotron Shorthand
+----------------------------------------------------------------------------------------------------
+
+    Picotron offers some shorthand forms following PICO-8's dialect of Lua, that are not standard 
+    Lua.
+
+    :: Shorthand if / while statements
+
+    "if .. then  .. end" statements, and "while .. then .. end" can be written on a single line:
+
+    if (not b) i=1 j=2
+
+    Is equivalent to:
+
+    if not b then i=1 j=2 end
+
+    Note that brackets around the short-hand condition are required, unlike the expanded version.
+
+    :: Shorthand Assignment Operators
+
+    Shorthand assignment operators can be constructed by appending a '=' to any binary operator,  
+    including arithmetic (+=, -= ..), bitwise (&=, |= ..) or the string concatenation operator 
+    (..=)
+
+    a += 2   -- equivalent to: a = a + 2
+
+    :: Integer divide
+
+    Picotron accepts \ as well as // for integer divide, which is equivalent to flr(x/y):
+
+    print(5 / 2)  -- 2.5
+    print(5 // 2) -- 2 (standard Lua)
+    print(5 \ 2)  -- 2 (same as the PICO-8 operator)
+
+    :: != operator
+
+    Not shorthand, but Picotron also accepts != instead of ~= for "not equal to"
+
+    print(1 != 2) -- true
+
+----------------------------------------------------------------------------------------------------
+    Program Stucture
+----------------------------------------------------------------------------------------------------
+
+    A Picotron program can optionally provide 3 functions:
+
+    function _init()
+        -- called once just before the main loop
+    end
+    function _update()
+        -- called 60 times per second
+    end
+    function _draw()
+        -- called each time the window manager asks for a frame
+        -- (normally 60, 30 or 20 times per second)
+    end	
+
+    :: Running Programs in the Background
+
+    A program that only contains _update (but no _draw) will continue to run in the background by 
+    default, but with a lower cpu priority.
+
+    When _draw is also defined (and the program has a window or fullscreen display), the _draw and 
+    _update  functions are only called when the program is at least partially visible. This allows 
+    Picotron to keep many tabs and workspaces open without impacting performance. In this case, the 
+    _update and/or _draw functions can be manually set to run in the background with 
+    window{background_updates = true}  or window{background_draws=true} respectively.
+
+====================================================================================================
+    API Reference
+====================================================================================================
+
+----------------------------------------------------------------------------------------------------
+    Graphics
+----------------------------------------------------------------------------------------------------
+
+    Graphics operations all respect the current @clip rectangle, @camera position, fill pattern 
+    @fillp(), draw @color, @{Colour Tables} and @Masks.
+
+    There are two categories of drawing operations: sprites ( @spr, @sspr, @map, @tline3d) and  
+    shapes ( @pset, @circ, @rectfill ..). The default @{Colour Tables} and @Masks state are set up  
+    so that sprites are drawn with colour 0 as transparent, while shapes draw colour 0 as opaque.
+
+    :: Sprite Indexes
+
+    Each sprite in memory can be assigned an index between 0..8191 that is used to reference it 
+    from sprite and map drawing functions.
+
+    Default indexes are assigned on cartridge startup based on the names of files found in gfx/. 
+    Each one  that starts with an integer is assigned a block of 256 indexes based on that number. 
+    For example:
+
+    gfx/0.gfx              0 .. 255
+    gfx/1_monsters.gfx   256 .. 511
+    gfx/2_blocks.gfx     512 .. 767
+    ..
+    gfx/31_ending.gfx   7936 ..8191
+
+    Sprites can also be manually indexed and retrieved with @set_spr / @get_spr.
+
+
+    clip(x, y, w, h, [clip_previous])
+
+        sets the clipping rectangle in pixels. all drawing operations will be clipped to the 
+        rectangle at x, y with a width and height of w,h.
+
+        clip() to reset.
+
+        when clip_previous is true, clip the new clipping region by the old one.
+
+
+    pset(x, y, [col])
+
+        sets the pixel at x, y to colour index col (0..63).
+
+        when col is not specified, the current draw colour is used.
+
+        for y=0,127 do
+            for x=0,127 do
+                pset(x, y, x*y/8)
+            end
+        end
+
+
+    pget(x, y)
+
+        returns the colour of a pixel on the screen at (x, y).
+
+        while (true) do
+            x, y = rnd(128), rnd(128)
+            dx, dy = rnd(4)-2, rnd(4)-2
+            pset(x, y, pget(dx+x, dy+y))
+        end
+
+        when x and y are out of bounds, pget returns 0.
+
+
+    fget(n, [f])
+
+    fset(n, [f], val)
+
+        get or set the value (val) of sprite n's flag f.
+
+        f is the flag index 0..7.
+
+        val is true or false.
+
+        the initial state of flags 0..7 are settable in the sprite editor, so can be used to create 
+        custom sprite attributes. it is also possible to draw only a subset of map tiles by 
+        providing a mask in @map().
+
+        when f is omitted, all flags are retrieved/set as a single bitfield.
+
+        fset(2, 1 | 2 | 8)   -- sets bits 0,1 and 3
+        fset(2, 4, true)     -- sets bit 4
+        print(fget(2))       -- 27 (1 | 2 | 8 | 16)
+
+
+    print(str, x, y, [col])
+
+    print(str, [col])
+
+        print a string str and optionally set the draw colour to col.
+
+        shortcut: written on a single line, ? can be used to call print without brackets: 
+
+            ?"hi"
+
+        when x, y are not specified, a newline is automatically appended. this can be omitted by 
+        ending the string with an explicit termination control character:
+
+            ?"the quick brown fox\0"
+
+        print returns the right-most x position and lowest y position that occurred while  
+        printing, relative to the camera position. This can be used to find out the width  of some 
+        text by printing it off-screen:
+
+            str = "text to center"
+            text_width = print(str, 0, -1000)
+            print(str, 100 - text_width/2, 50) -- centered at 100
+
+
+    cursor(x, y, [col])
+
+        set the cursor position.
+
+        if col is specified, also set the current colour.
+
+
+    color([col])
+
+        set the current colour to be used by shape drawing functions (pset, circ, rect..), when one 
+        is not given as the last argument.
+
+        if col is not specified, the current colour is set to 6.
+
+
+    cls([col])
+
+        clear the screen and reset the clipping rectangle.
+
+        col defaults to 0 (black)
+
+
+    camera([x, y])
+
+        set a screen offset of -x, -y for all drawing operations
+
+        camera() to reset
+
+
+    circ(x, y, r, [col])
+
+    circfill(x, y, r, [col])
+
+        draw a circle or filled circle at x,y with radius r
+
+        if r is negative, the circle is not drawn.
+
+        When bit 0x800000000 in col is set, circfill draws inverted (everything outside the circle 
+        is drawn).
+
+
+    oval(x0, y0, x1, y1, [col])
+
+    ovalfill(x0, y0, x1, y1, [col])
+
+        draw an oval that is symmetrical in x and y (an ellipse), with the given bounding 
+        rectangle.
+
+        When bit 0x800000000 in col is set, ovalfill is drawn inverted.
+
+
+    line(x0, y0, [x1, y1, [col]])
+
+        draw a line from (x0, y0) to (x1, y1)
+
+        if (x1, y1) are not given, the end of the last drawn line is used.
+
+        line() with no parameters means that the next call to line(x1, y1) will only set the end 
+        points without drawing.
+
+        function _draw()
+            cls()
+            line()
+            for i=0,6 do
+                line(64+cos(t()+i/6)*20, 64+sin(t()+i/6)*20, 8+i)
+            end	
+        end
+
+
+    rect(x0, y0, x1, y1, [col])
+
+    rectfill(x0, y0, x1, y1, [col])
+
+        draw a rectangle or filled rectangle with corners at (x0, y0), (x1, y1).
+
+        When bit 0x800000000 in col is set, rectfill draws inverted.
+
+
+    rrect(x, y, width, height, radius, [col])
+
+    rrectfill(x, y, width, height, radius, [col])
+
+        draw a rounded rectangle or filled rectangle with rounded corners.
+
+        Width and height are in pixels, and must both be more than 0 for the shape to be drawn.
+
+        Radius defaults 0, and is the size of the quarter-circle to be drawn at each corner. The 
+        radius used is clamped to fall the range 0 .. min(width,height)/2.
+
+        When bit 0x800000000 in col is set, rrectfill draws inverted.
+
+        Draw a red (colour 8) rounded rectangle 40 pixels wide and 30 pixels talls with 3 pixels 
+        missing at each corner (radius 2):
+
+        > rrectfill(100,50,40,30,2,8)
+
+
+    pal(c0, c1, [p])
+
+        pal() swaps colour c0 for c1 for one of three palette re-mappings (p defaults to 0):
+
+        0: Draw palette
+
+            The draw palette re-maps colours when they are drawn. For example, an orange flower 
+            sprite can be drawn as a red flower by setting the 9th palette value to 8:
+
+            pal(9,8)     -- draw subsequent orange (colour 9) pixels as red (colour 8)
+            spr(1,70,60) -- any orange pixels in the sprite will be drawn with red instead
+
+            Changing the draw palette does not affect anything that was already drawn to the 
+            screen.
+
+        1: Indexed display palette
+
+            The display palette re-maps the whole screen when it is displayed at the end of a 
+            frame.
+
+        2: RGB display palette
+
+            The raw red, green, blue values that are finally displayed for a given colour index.
+
+            pal(1, 0xff0080, 2)
+
+        To reset a palette to the default, use pal(which) -- e.g. pal(0) to reset the draw palette.
+
+        pal() resets the draw palette and display palette, but not the rgb display palette.
+
+
+    palt(c, is_transparent)
+
+        Set transparency for colour index c to is_transparent (boolean) transparency is observed by 
+        @spr(), @sspr(), @map() and @tline3d()
+
+        palt(8, true) -- red pixels not drawn in subsequent sprite/tline draw calls
+
+        When c is the only parameter, it is treated as a bitfield used to set all 64 values. for 
+        example: to set colours 0 and 1 as transparent:
+
+        -- set colours 0,1 and 4 as transparent
+        palt(0x13)
+
+        palt() resets to default: all colours opaque except colour 0. Same as palt(1)
+
+
+    spr(s, x, y, [flip_x], [flip_y])
+
+        Draw sprite s at position x,y
+
+        s can be either a userdata (type "u8" -- see @Userdata) or sprite index (see @{Sprite 
+        Indexes}).
+
+        Colour 0 drawn as transparent by default (see @palt())
+
+        When flip_x is true, flip horizontally. When flip_y is true, flip vertically.
+
+
+    sspr(s, sx, sy, sw, sh, dx, dy, [dw, dh], [flip_x], [flip_y]]
+
+        Stretch a source rectangle of sprite s (sx, sy, sw, sh) to a destination rectangle on the 
+        screen (dx, dy, dw, dh). In both cases, the x and y values are coordinates (in pixels) of 
+        the rectangle's top left corner, with a width of w, h.
+
+        s can be either a userdata (type "u8") or a sprite index.
+
+        Colour 0 drawn as transparent by default (see @palt())
+
+        dw, dh defaults to sw, sh.
+
+        When flip_x is true, flip horizontally. When flip_y is true, flip vertically.
+
+
+    get_spr(index)
+
+    set_spr(index, ud)
+
+        Get or set the sprite (a 2d userdata object of type "u8") for a given index (0..8191).
+
+        These functions can be ignored when using the default indexing scheme: (See @{Sprite 
+        Indexes})
+
+
+    fillp(p)
+
+        Set a 4x4 fill pattern using PICO-8 style fill patterns. p is a bitfield in reading order 
+        starting from the highest bit.
+
+        Observed by @circ() @circfill() @rect() @rectfill() @oval() @ovalfill() @pset() @line()
+
+        Fill patterns in Picotron are 64-bit specified 8 bytes from 0x5500, where each byte is a 
+        row (top to bottom) and the low bit is on the left. To define an 8x8 with high bits on the 
+        right (so that binary numbers visually match), fillp can be called with 8 arguments:
+
+        fillp(
+            0b10000000,
+            0b01011110,
+            0b00101110,
+            0b00010110,
+            0b00001010,
+            0b00000100,
+            0b00000010,
+            0b00000001
+        )
+        circfill(240,135,50,9)
+
+        Two different colours can be specified in the last parameter
+
+        circfill(320,135,50,0x1c08) -- draw with colour 28 (0x1c) and 8
+
+        To get transparency while drawing shapes, the shape target mask (see @Masks) should be set:
+
+        poke(0x550b,0x3f)
+        palt()
+        --> black pixels won't be drawn
+
+    :: Colour Tables
+
+        Colour tables are applied by all graphics operations when each pixel is drawn. Each one is 
+        a 64x64 lookup table indexed by two colours:
+
+        1. the colour to be drawn (0..63)
+        2. the colour at the target pixel (0..63)
+
+        Each entry is then the colour that should be drawn. So for example, when drawing a black 
+        (0) pixel on a red (8) pixel, the colour table entry for that combination might also be red 
+        (in effect, making colour 0 transparent).
+
+        Additionally, one of four colour tables can be selected using the upper bits 0xc0 of either 
+        the source or destination pixel.  Using custom colour table data and selection bits allows 
+        for a variety of effects including overlapping shadows, fog,  tinting, additive blending, 
+        and per-pixel clipping. Functions like @pal() and @palt() also modify colour tables to  
+        implement transparency and colour switching.
+
+        To use colour tables with shapes, note that the default target_mask for shapes is 0x0, so 
+        every table look up is equivalent to drawing on colour 0. To fix this, use: poke(0x550b, 
+        0x3f)
+
+        Colour tables and masks are quite low level and often can be ignored! For more details, 
+        see: https://www.lexaloffle.com/dl/docs/picotron_gfx_pipeline.html
+
+    :: Masks
+
+        When each pixel is drawn, three masks are also used to determine the output colour. The 
+        draw colour (or pixel colour in the case of a sprite) is first ANDed with the read mask. 
+        The colour of the pixel that will be overwritten is then ANDed by the target mask. These 
+        two values are then used as indexes into a colour table to get the output colour. Finally, 
+        the write mask determines which bits in the draw target will actually be modified.
+
+        0x5508  read mask
+        0x5509  write mask
+        0x550a  target mask for sprites
+        0x550b  target_mask for shapes
+
+        The default values are: 0x3f, 0x3f, 0x3f and 0x00. 0x3f means that colour table selection 
+        bits are ignored (always use colour table 0), and the 0x00 for shapes means that the target 
+        pixel colour is ignored so that it is possible to draw a black rectangle with colour 0 even 
+        though that colour index is transparent by default.
+
+        The following program uses only the write mask to control which bits of the draw target are 
+        written. Each circle writes to 1 of the 5 bits: 0x1, 0x2, 0x4, 0x8 and 0x10. When they are 
+        all overlapping, all 5 bits are set giving colour 31.
+
+        function _draw()
+            cls()
+            for i=0,4 do
+                -- draw to a single bit
+                poke(0x5509, 1 << i)
+                r=60+cos(t()/4)*40
+                x = 240+cos((t()+i)/5)*r
+                y = 135+sin((t()+i)/5)*r
+                circfill(x, y, 40, 1 << i)
+            end
+        end
+
+----------------------------------------------------------------------------------------------------
+    Map
+----------------------------------------------------------------------------------------------------
+
+    A map in Picotron is a 2d userdata of type i16. Each tile value uses 13 bits for the @{Sprite 
+    Indexes},  and 3 bits for orientation:
+
+    0x00ff the sprite number within a .gfx file (0..255)
+    0x1f00 the gfx file number (0..31)
+    0x2000 flip the tile diagonally  ** not supported by tline3d()
+    0x4000 flip the tile horizontally
+    0x8000 flip the tile vertically
+
+    All tile flipping bits are observed by the map editor and @map().
+
+    The default tile width and height are set to match sprite 0.
+
+    :: Map Files
+
+        A map file (foo.map) is a table of layers, where each layer has a .bmp (the userdata for 
+        that layer) a .name, and some other values for the editor (.pan_x, .zoom etc). So, to 
+        access the userdata for a given layer of a map file:
+
+        layers = fetch("map/mountains.map") -- call once when e.g. loading a level
+        ud = layers[1].bmp -- grab the top layer's userdata
+        map(ud) -- draw that layer
+        print("the layer is "..ud:width().." tiles wide")
+
+        By default, The first layer of map/0.map is set as the current working map if PICO-8 style 
+        manipulation is preferred (see below). Map files can be alternatively be manually loaded, 
+        in which each layer can be manipulated as regular @Userdata and passed to @map()  or 
+        @tline3d() as the first parameter.
+
+        layers = fetch("map/forest.map") -- call once when e.g. loading a level
+        map(layers[2].bmp)               -- draw a particular layer
+        ?map:get(5,3)                    -- print the tile value at 5,3 
+
+    :: Setting a Current Working Map
+
+        This is an optional PICO-8 compatibility feature
+
+        When only a single global map is needed, there is the option to set the "current working 
+        map" and use only PICO-8 style map functions @map, @mset and @mget.
+
+        The current working map is taken to be whatever i16 userdata is @memmap()'ed to 0x100000. 
+        This happens automatically when a cartridge is run and map/0.map exists (the first layer is 
+        used).
+
+        mymap = fetch("forest.map")[2].bmp -- grab layer 2 from a map file
+        memmap(mymap, 0x100000)
+        map()      -- same as map(mymap)
+        ?mget(2,2) -- same as mymap:get(2,2)
+
+
+    map(tile_x, tile_y, [sx, sy], [tiles_x, tiles_y], [p8layers], [tile_w, tile_h])
+
+    map(src, tile_x, tile_y, [sx, sy], [tiles_x, tiles_y], [p8layers], [tile_w, tile_h])
+
+        Draw section of a map (starting from tile_x, tile_y) at screen position sx, sy (pixels), 
+        from the userdata src, or from the current working map when src is not given. Note that  
+        the src parameter can be omitted entirely to give a PICO-8 compatible form.
+
+        To draw a 4x2 blocks of tiles starting from 0,0 in the map, to the screen at 20,20:
+
+        map(0, 0, 20, 20, 4, 2) 
+
+        tiles_x and tiles_y default to the entire map.
+
+        map() is often used in conjunction with camera(). To draw the map so that a player object 
+        (drawn centered at pl.x in pl.y in pixels) is centered in fullscreen (480x270):
+
+        camera(pl.x - 240, pl.y - 135)
+        map()
+
+        p8layers is a bitfield. When given, only sprites with matching sprite flags are drawn. For 
+        example, when p8layers is 0x5, only sprites with flag 0 and 2 are drawn. This has nothing 
+        to do with the list of layers in the map editor -- it follows PICO-8's approach for getting 
+        more than one "layer" out of a single map.
+
+        tile_w and tile_h specify the integer width and height in pixels that each tile should  be 
+        drawn. Bitmaps that do not match those dimensions are stretched to fit. The default values 
+        for tile_w and tile_h are @0x550e, @0x550f (0 means 256), which are in turn initialised to 
+        the dimensions of sprite 0 on run.
+
+        Sprite 0 is not drawn by default, so that sparse maps do not cost much cpu as only the 
+        non-zero tiles are expensive. To draw every tile value including 0, set bit 0x8 at 0x5f36:
+
+        poke(0x5f36), peek(0x5f36) | 0x8
+
+
+    mget(x, y)
+
+    mset(x, y, val)
+
+        PICO-8 style getters & setters that operate on the current working map. These are 
+        equivalent to using the userdata methods :get and :set directly. So, if a userdata mymap is 
+        the current working map, mget(x,y) is squivalent to mymap:get(x,y).
+
+        mymap = userdata("i16", 32,32)
+        -- using standard userdata get and set:
+        mymap:set(1,3,42)
+        ?mymap:get(1,3) -- 42
+        -- alternatively:
+        memmap(mymap, 0x100000) -- set mymap as the current working map
+        mset(1,3,117)
+        ?mget(1,3) -- 117
+
+
+    tline3d(src, x0, y0, x1, y1, u0, v0, u1, v1, w0, w1, [flags])
+
+        Draw a textured line from (x0,y0) to (x1,y1), sampling colour values from either a sprite 
+        or a map.
+
+        src can be one of four things:
+
+        number          -- sprite index (coordinates in pixels)
+        userdata (u8)   -- sprite data
+        userdata (i16)  -- map data (coordinates in tiles)
+
+        The src parameter can also be ommited, in which case the current map is used.
+
+        Both the dimensions of the map and the tile size must be powers of 2.
+
+        u0, v0, u1, v1 are coordinates to sample from, given in pixels for sprites, or tiles for 
+        maps. Colour values are sampled from the sprite present at each map tile.
+
+        w0, w1 are used to control perspective and mean 1/z0 and 1/z1. Default values are 1,1  
+        (gives a linear interpolation between uv0 and uv1).
+
+        Experimental flags useful for polygon rendering / rotated sprites: 0x100 to skip drawing  
+        the last pixel, 0x200 to perform sub-pixel texture coordinate adjustment.
+
+        Unlike @map() or PICO-8's tline, @tline3d() does not support empty tiles: pixels from 
+        sprite 0 are always drawn, and there is no p8layers bitfield parameter.
+
+        :: tline3d CPU
+
+        By default, tline3d performs a divide-by-w every 8 pixels and renders an affine span 
+        between them. Use flag 0x400 to perform the divide every pixel for more accurate 
+        perspective mapping at the cost of around 50% more cpu.
+
+        The cpu cost of tline3d is also determined by how many colour tables are active. When the 
+        default masks and fill pattern are set so that only colour table 0 is used (0x3f3f3f, 0x0),  
+        tline3d is around 20% faster when drawing textures:
+
+                                    0x400 off         0x400 on
+         
+        Single colour table         3 px / cycle      2 px / cycle
+        Multiple colour tables      2.5px / cycle     1.5px / cycle
+
+        When tline3d is drawing maps, there are only two code paths: high quality mode (flag 0x400) 
+        fills at 1 pixel per cycle and supports fill patterns / multiple colour tables, while low  
+        quality mode fills at 1.5 pixels per cycle.
+
+----------------------------------------------------------------------------------------------------
+    Audio
+----------------------------------------------------------------------------------------------------
+
+    All sound output in Picotron is generated by the PFX6416 synthesizer. It operates on a block of 
+    RAM as input that contains all  of the instrument, SFX and music pattern definitions. The .sfx 
+    file format is simply a 256k memory dump of that section of ram.  By default, sfx/0.sfx is 
+    loaded at 0x30000, but multiple .sfx files can be loaded and played at the same time (see 
+    @music).
+
+
+    sfx(n, [channel], [offset], [length], [mix_volume])
+
+        Play sfx n (0..63) on channel (0..15) from note offset (0..63 in notes) for length notes. 
+        When n is a negative number, a special sfx channel command is issued (see below).
+
+        Giving nil or -1 as the channel index automatically chooses a channel that is not being 
+        used.
+
+        Negative offsets can be used to delay before playing.
+
+        When the sfx is looping, length still means the number of (posisbly repeated) notes to 
+        play.
+
+        When mix_volume is given, the channel is mixed at that value (0x40 means 1.0). Otherwise 
+        the value at 0x553a is used (0x40 by default). In addition to the per-channel mix volume, 
+        all  channels are subject to a per-process global volume specified at 0x5538 (default: 0x40 
+        == 1.0).
+
+        When sfx/0.sfx is found on cartridge startup, it is loaded at 0x30000 which is the default 
+        base address for tracks actived by sfx(). A custom base address can be assigned with 
+        poke(0x553c, base_addr >> 16) before each call to sfx().
+
+        :: special sfx channel commands 
+
+        when n is a negative number, a special command is issued for the given channel:
+
+        -1 stops playing any sfx on that channel. The existing channel state is not altered: 
+        stopping an sfx  that uses an instrument with a long echo will not cut the echo short.
+
+        -2 stops playing any sfx on that channel, and also clears the channel state state: echos 
+        are cut short  and the channel is immediately silent.
+
+        -3 release any looping sfx on that channel
+
+        -4 set the mix volume. The channel mix volume is not reset until sfx() is called on that 
+        channel, so music channel mix volumes persist between calls to music().
+
+        > sfx(-4, 1, 0x40) -- reset the mix volume on channel 1
+
+
+    music(n, [fade_len], [channel_mask], [base_addr], [tick_offset])
+
+        Play music starting from pattern n.
+        n -1 to stop music
+         
+        fade_len is in ms (default: 0). so to fade pattern 0 in over 1 second:
+
+        music(0, 1000)
+
+        channel_mask is bitfield that specifies which channels to reserve for music only, low bits 
+        first.
+
+        For example, to play only on the first three channels 0..2, the lowest three bits should be 
+        set:
+
+        music(0, nil, 0x7) -- bits: 0x1 | 0x2 | 0x4
+
+        Reserved channels can still be used to play sound effects on, but only when that channel 
+        index is explicitly requested by @sfx().
+
+        When music channels are mixed, they are subject to a global per-app volume specified at 
+        0x5538 (default: 0x40 == 1.0), which is then multiplied by a global music volume at 0x5539 
+        (default: 0x40 == 1.0).
+
+        tick_offset is an optional offset to start playing from. This is given in ticks rather than 
+        rows, because it supports patterns with tricks that play back at different speeds. To start 
+        from row 2 of a track that has spd 16, use:
+
+        music(0, nil, nil, nil, 2 * 16)
+
+        :: Loading Music at a Separate Address
+
+        When base_addr is given, the channels used to play music are assigned that location in 
+        memory to read data from. This can be used to load multiple .sfx files into memory and play 
+        them at the same time. For example, to load some music at 0x80000 and play it without 
+        interfering with sound effects stored at the default location of 0x30000:
+
+        fetch("sfx/title.sfx"):poke(0x80000) -- load 256k into 0x80000..0xbffff
+        music(0, nil, nil, 0x80000) -- play music using 0x80000 as the audio base address
+
+
+    note(pitch, inst, vol, effect, effect_p, channel, retrig, panning)
+
+        This provides low level control over the state of a channel. It is useful in more niche 
+        situations, like audio authoring tools and size-coding.
+
+        Internally this is what is used to play each row of a sfx when one is active. Use 0xff to 
+        indicate an attribute should not be altered.
+
+        Every parameter is optional:
+
+        pitch     channel pitch (default 48 -- middle C)
+        inst      instrument index (default 0)
+        vol       channel volume (default 64)
+        effect    channel effect (default 0)
+        effect_p  effect parameter (default 0)
+        channel   channel index (0..15 -- default 0)
+        retrig    (boolean) force retrigger -- default to false
+        panning   set channel panning (-128..127)
+
+        To kill all channels (including leftover echo and decay envelopes):
+
+        note() -- same as sfx(-2, -1)
+
+    :: Working with Multiple SFX Files
+
+        fetch("sfx/title.sfx"):poke(0x80000) -- load 256k into 0x80000..0xbffff
+        music(0, nil, nil, 0x80000)
+
+    :: Querying Mixer State
+
+        Global mixer state:
+
+        stat(464)         -- bitfield indicating which channels are playing a track (sfx)
+        stat(465, addr)   -- copy last mixer stereo output buffer output is written as 
+                          -- int16's to addr. returns number of samples written.
+        stat(466)         -- which pattern is playing (-1 for no music)
+        stat(467)         -- return the index of the left-most non-looping music channel
+
+        Per channel (c) state:
+
+        stat(400 + c,  0) -- note is held (0 false 1 true)
+        stat(400 + c,  1) -- channel instrument
+        stat(400 + c,  2) -- channel vol
+        stat(400 + c,  3) -- channel pan
+        stat(400 + c,  4) -- channel pitch
+        stat(400 + c,  5) -- channel bend
+        stat(400 + c,  6) -- channel effect
+        stat(400 + c,  7) -- channel effect_p
+        stat(400 + c,  8) -- channel tick len
+        stat(400 + c,  9) -- channel row
+        stat(400 + c, 10) -- channel row tick
+        stat(400 + c, 11) -- channel sfx tick
+        stat(400 + c, 12) -- channel sfx index (-1 if none finished)
+        stat(400 + c, 13) -- channel last played sfx index 
+
+        stat(400 + c, 19, addr)     -- fetch stereo output buffer (returns number of samples) 
+        stat(400 + c, 20 + n, addr) -- fetch mono output buffer for a node n (0..7)
+
+----------------------------------------------------------------------------------------------------
+    Input
+----------------------------------------------------------------------------------------------------
+
+
+    btn([b], [pl])
+
+        Returns the state of button b for player index pl (default 0 -- means Player 1)
+
+        0 1 2 3     LEFT RIGHT UP DOWN
+        4 5         Buttons: O X
+        6           MENU
+        7           reserved
+        8 9 10 11   Secondary Stick L,R,U,D
+        12 13       Buttons (not named yet!)
+        14 15       SL SR
+
+        A secondary stick is not guaranteed on all platforms! It is preferable to offer an 
+        alternative control scheme that does not require it, if possible.
+
+        The return value is false when the button is not pressed (or the stick is in the deadzone), 
+        and a number between 1..255 otherwise. To get the X axis of the primary stick:
+
+        local dx = (btn(1) or 0) - (btn(0) or 0)
+
+        Stick values are processed by btn so that the return values are only physically possible 
+        positions of a circular stick: the magnitude is clamped to 1.0 (right + down) even with 
+        digital buttons gives values of 181 for btn(1) and btn(3), and it is impossible for e.g. 
+        LEFT and RIGHT to be held at the same time. To get raw controller values, use peek(0x5400 + 
+        player_index*16 + button_index).
+
+        Keyboard controls are currently hard-coded:
+
+        0~5     Cursors, Z/X
+        6       Enter  -- disable with window{pauseable=false}
+        8~11    ADWS
+        12,13   F,G
+        14,15   Q,E
+
+
+    btnp(b, [pl])
+
+        btnp is short for "Button Pressed"; Instead of being true when a button is held down,  btnp 
+        returns true when a button is down and it was not down the last frame. It also repeats 
+        after 30 frames, returning true every 8 frames after that. This can be used for  things 
+        like menu navigation or grid-wise player movement.
+
+        The state that btnp() reads is reset at the start of each call to @_update60, so it is 
+        preferable to use btnp only from inside that call and not from _draw(), which might be 
+        called less frequently.
+
+        Custom delays (in frames @ 60fps) can be set by poking the following memory addresses:
+
+        poke(0x5f5c, delay) -- set the initial delay before repeating. 255 means never repeat.
+        poke(0x5f5d, delay) -- set the repeating delay.
+
+        In both cases, 0 can be used for the default behaviour (delays 30 and 8)
+
+
+    key(k, [raw])
+
+    keyp(k, [raw])
+
+        returns the state of key k
+
+        function _draw()
+            cls(1)
+            -- draw when either shift key is held down
+            if (key("shift")) circfill(100,100,40,12)
+        end
+
+        The name of each k is the same as the character it produces on a US keyboard with some 
+        exceptions: "space", "delete", "enter", "tab", "ctrl", "shift", "alt", "pageup", 
+        "pagedown".
+
+        By default, key() uses the local keyboard layout; On an AZERTY keyboard, key("a") is true  
+        when the key to the right of Tab is pressed. To get the raw layout, use true as the second 
+        parameter to indicate that k should be the name of the raw scancode. For example, key("a", 
+        true) will be true when the key to the right of capslock is held, regardless of local 
+        keyboard layout.
+
+        if (key"ctrl" and keyp"a") printh("CTRL-A Pressed")
+
+        keyp(k) has the same behaviour key(k), but true when the key is pressed or repeating.
+
+        keyp() and key() with no parameters return true when any key is pressed.
+
+
+    peektext()
+
+    readtext([clear])
+
+        To read text from the keyboard via the host operating system's text entry system, 
+        peektext() can be used to find out if there is some text waiting, and readtext() can be 
+        used to consume the next piece of text:
+
+        while (peektext())
+            c = readtext()
+            printh("read text: "..c)
+        end
+
+        When "clear" is true, any remaining text in the queue is discarded.
+
+
+    mouse()
+
+        Returns mouse_x, mouse_y, mouse_b, wheel_x, wheel_y
+
+        mouse_b is a bitfield: 0x1 means left mouse button, 0x2 right mouse button
+
+
+    mouselock(lock, event_sensitivity, move_sensitivity)
+
+        when lock is true, Picotron makes a request to the host operating system's window manager 
+        to capture the mouse, allowing it to control sensitivity and movement speed.
+
+        returns dx,dy: the relative position since the last frame
+
+        event_sensitivity in a number between 0..4 that determines how fast dx, dy change (1.0 
+        means once per picotron pixel)
+
+        move_sensitivity in a number between 0..4: 1.0 means the cursor continues to move at the 
+        same speed.
+
+        local size, col = 20, 16
+        function _draw()
+            cls()
+            circfill(240, 135, size*4, col)
+            local _,_,mb = mouse()
+            dx,dy = mouselock(mb > 0, 0.05, 0) -- dx,dy change slowly, stop mouse moving
+            size += dx  --  left,right to control size
+            col  += dy  --  up,down to control colour
+        end
+
+
+    input([prompt], [flags])
+
+        The input function allows terminal programs to be interactive. Execution of the program  is 
+        blocked until the user enters a response, and that response is returned:
+
+        str = input("what is your name? ")
+        print("hello "..str)
+
+        prompt is a string that is shown to the left of user input. It defaults to "? ".
+
+        flags
+
+        0x1 hide the prompt once input() has returned
+        0x2 complete the input when a single character is given (do not wait for enter)
+        0x4 do not block -- return nil when there is no response that frame
+
+        Interactive terminal programs that run indefinitely do not have a _update or _draw 
+        callback,  and instead can use input() in the mainloop:
+
+        print("press k,l to adjust value or q to quit")
+        print("") -- is going to get consumed by \r below
+        val = 10
+        while true do
+          res = input("",0x7)
+          if (res == "q") exit()
+          if (res == "k") val -= 1
+          if (res == "l") val += 1
+          print("\rvalue: "..val) -- \r to write over previous line
+        end
+        print("finished")
+
+        Note that there is currently no way to respond to non-textinput keys (like cursors) from 
+        terminal programs.
+
+        Terminal programs can be run during development with ctrl-r, but as they occupy the same 
+        process as the terminal that is displaying them, there may be some disparities in 
+        behaviour.
+
+----------------------------------------------------------------------------------------------------
+    Strings
+----------------------------------------------------------------------------------------------------
+
+    Strings in Lua are written either in single or double quotes or with matching [[ ]] brackets:
+
+        s = "the quick"
+        s = 'brown fox';
+        s = [[
+            jumps over
+            multiple lines
+        ]]
+
+    The length of a string (number of characters) can be retrieved using the # operator:
+
+        >print(#s)
+
+    Strings can be joined using the .. operator. Joining numbers converts them to strings.
+
+        >print("three "..4) --> "three 4"
+
+    When used as part of an arithmetic expression, string values are converted to numbers:
+
+        >print(2+"3")   --> 5
+
+
+    chr(val0, val1, ...)
+
+        Convert one or more ordinal character codes to a string.
+
+        chr(64)                    -- "@"
+        chr(104,101,108,108,111)   -- "hello"
+
+
+    ord(str, [index], [num_results])
+
+        Convert one or more characters from string STR to their ordinal (0..255) character codes.
+
+        Use the index parameter to specify which character in the string to use. When index is out 
+        of range or str is not a string, ord returns nil.
+
+        When num_results is given, ord returns multiple values starting from index.
+
+        ord("@")         -- 64
+        ord("123",2)     -- 50 (the second character: "2")
+        ord("123",2,3)   -- 50,51,52
+
+
+    sub(str, pos0, [pos1])
+
+        grab a substring from string str, from pos0 up to and including pos1. when pos1 is not 
+        specified, the remainder of the string is returned. when pos1 is specified, but not a 
+        number, a single character at pos0 is returned.
+
+        s = "the quick brown fox"
+        print(sub(s,5,9))    --> "quick"
+        print(sub(s,5))      --> "quick brown fox"
+        print(sub(s,5,true)) --> "q"
+
+
+    split(str, [separator], [convert_numbers])
+
+        Split a string into a table of elements delimited by the given separator (defaults to ","). 
+        When separator is a number n, the string is split into n-character groups. When 
+        convert_numbers is true, numerical tokens are stored as numbers (defaults to true). Empty 
+        elements are stored as empty strings.
+
+        split("1,2,3,a,b")               -- {1,2,3,"a","b"}
+        split("one:two:3",":",false) -- {"one","two","3"}
+        split("1,,2,")               -- {1,"",2,""}
+
+
+    type(val)
+
+        Returns the type of val as a string.
+
+        > print(type(3))
+        number
+        > print(type("3"))
+        string
+
+        To find out if a number is an integer or float, use math.type(num).
+
+
+    create_delta(str0, str1)
+
+    apply_delta(str0, delta)
+
+        create_delta returns a string encoding all of the information needed to get from str0 to 
+        str1 ("delta"). The delta can then be used by apply_delta to reproduce str1 given only 
+        str0. 
+
+        For example, given the two strings:
+
+        str0 = the quick brown fox
+        str1 = the quick red fox
+
+        create_delta(str0, str1) will return a string that instructs apply_delta() to replace 
+        "brown" with "red".
+
+        d = create_delta(str0, str1)
+        print(apply_delta("the quick brown fox", d)) --> the quick red fox
+
+        Note that the string given to apply_delta must be exactly the same as the one used to 
+        create the delta; otherwise apply_delta returns nil.
+
+        deltas can be used together with pod() to encode the difference between two tables of 
+        unstructured data:
+
+        a = {1,2,3}
+        b = {1, "banana", 2, 3}
+        d = create_delta(pod(a), pod(b))
+         
+        -- reconstruct b using only a and the delta (d)
+        b2 = apply_delta(pod(a), d)
+        foreach(unpod(b2), print)
+        1
+        banana
+        2
+        3
+
+        This makes deltas useful for things like undo stacks and perhaps (later) changes in game 
+        state to send across a network.  The binary format of the delta includes a few safety 
+        features like crc and length checks to ensure that the input and  output strings are as 
+        expected. The first 4 bytes of the delta string are always "dst\0".
+
+        The backend for delta encoding is also used internally by anywhen to log incremental 
+        changes made to each file. There is a lot riding on its correctness ~ please let me know if 
+        you discover any odd behaviour with deltas!
+
+----------------------------------------------------------------------------------------------------
+    Tables
+----------------------------------------------------------------------------------------------------
+
+    With the exception of pairs(), the following functions and the # operator apply only to tables  
+    that are indexed starting from 1 and do not have NIL entries. All other forms of tables can  be 
+    considered as unordered hash maps, rather than arrays that have a length.
+
+
+    add(tbl, val, [index])
+
+        Add value val to the end of table tbl. Equivalent to:
+
+        tbl[#tbl + 1] = val
+
+        If index is given then the element is inserted at that position:
+
+            foo={}        -- create empty table
+            add(foo, 11)
+            add(foo, 22)
+            print(foo[2]) -- 22
+
+
+    del(tbl, val)
+
+        Delete the first instance of value VAL in table TBL. The remaining entries are shifted left 
+        one index to avoid holes.
+
+        Note that val is the value of the item to be deleted, not the index into the table. (To 
+        remove an item at a particular index, use deli instead). del() returns the deleted item, or 
+        returns no value when nothing was deleted.
+
+            a={1,10,2,11,3,12}
+            for item in all(a) do
+                if (item < 10) then del(a, item) end
+            end
+            foreach(a, print) -- 10,11,12
+            print(a[3])       -- 12
+
+
+    deli(tbl, [index])
+
+        Like @del(), but remove the item from table tbl at index. When index is not given, the last 
+        element of the table is removed and returned.
+
+
+    count(tbl, [val])
+
+        Returns the length of table t (same as #tbl) When val is given, returns the number of 
+        instances of VAL in that table.
+
+
+    all(tbl)
+
+        Used in for loops to iterate over all items in a table (that have a 1-based integer index),  
+        in the order they were added.
+
+            t = {11,12,13}
+            add(t,14)
+            add(t,"hi")
+            for v in all(t) do print(v) end -- 11 12 13 14 hi
+            print(#t) -- 5
+
+
+    foreach(tbl, func)
+
+        For each item in table tbl, call function func with the item as a single parameter.
+
+            > foreach({1,2,3}, print)
+
+
+    pairs(tbl)
+
+        Used in for loops to iterate over table tbl, providing both the key and value for each 
+        item. Unlike @all(), pairs() iterates over every item regardless of indexing scheme. Order 
+        is not guaranteed.
+
+            t = {["hello"]=3, [10]="blah"}
+            t.blue = 5;
+            for k,v in pairs(t) do
+                print("k: "..k.."  v:"..v)
+            end
+
+        Output:
+
+            k: 10  v:blah
+            k: hello  v:3
+            k: blue  v:5
+
+----------------------------------------------------------------------------------------------------
+    PODs
+----------------------------------------------------------------------------------------------------
+
+    A POD ("Picotron Object Data") is a string that encodes Lua values: tables, userdata, strings, 
+    numbers booleans, and nested tables containing those types.
+
+    PODs form the basis of all data transfer and storage in Picotron. Every file is a single POD on 
+    disk,  the contents of the clipboard is a POD, images embedded in documents are PODs, and 
+    messages sent between processes are PODs.
+
+
+    pod(val, [flags], [metadata])
+
+        Returns a binary string encoding val.
+
+        flags determine the encoding format (default: 0x0)
+
+        metadata is an optional value that is encoded into the string and stores additional 
+        information about the pod.
+
+        ?pod({a=1,b=2})
+        {a=1,b=2}
+
+        pod() returns nil when the input value contains functions, circular references, or other 
+        values that can not be encoded.
+
+        flags:
+
+            0x1 pxu: encode userdata in a compressed (RLE-style) form
+            0x2 lz4: binary compression pass (dictionary matching)
+            0x4	base64 text encoding (convert back into a text-friendly format)
+
+            Plaintext PODs can get quite large if they contain images or map data.  A compressed 
+            binary encoding can be generated using flags 0x1 and 0x2, which are normally used 
+            together as the pxu format aims to produce output that can be further compressed by 
+            lz4. store() uses this format by default.
+
+            The resulting string contains non-printable characters and starts with the header 
+            "lz4\0", so only the first 3 characters are printed here:
+
+            ?pod({a=1,b=2}, 0x3)
+            lz4
+
+
+    unpod(str)
+
+        returns the decoded value, and the decoded metadata as a second result:
+
+        str = pod({4,5,6}, 0, {desc = "an uninteresting sequence"})
+         
+        c,m = unpod(str) -- returns content and metadata
+        ?m.desc --  an uninteresting sequence
+        ?c[1] -- 4
+
+----------------------------------------------------------------------------------------------------
+    Files
+----------------------------------------------------------------------------------------------------
+
+    A file in picotron is a single POD (see the previous section), and uses the metadata part of 
+    the POD as a metadata fork. As such, files are stored and fetched atomically; there is no 
+    concept of a partial read, write or append.
+
+
+    store(filename, obj, [metadata])
+
+        store a lua object (tables, strings, userdata, booleans and numbers are allowed) as a file.
+
+        filenames can contain alphanumeric characters, "_", "-" and "."
+
+        When metadata is given, each field is added to the file's metadata without clobbering any 
+        existing fields.
+
+        store("foo.pod", {x=3,y=5})
+        a = fetch("foo.pod")
+        ?a.x -- 3
+
+        When a cartridge needs to persist data (settings, high scores etc), it can use store() to 
+        write to /appdata:
+
+        store("/appdata/mygame_highscores.pod", highscore_tbl)
+
+        If the cartridge needs to store more than one or two files, a folder can be used:
+
+        mkdir("/appdata/mygamename")
+        store("/appdata/mygamename/highscores.pod", highscore_tbl)
+
+        Either method is fine. In most cases, cartridges are run directly from the BBS and thus 
+        sandboxed so that writes to /appdata/ are mapped to /appdata/bbs/cart_id/. This means that  
+        BBS carts can not read or clobber data written by other bbs carts, except for data written  
+        to a special shared folder: /appdata/shared.
+
+                When running under web, /appdata (and only /appdata) is persisted using Indexed DB 
+        storage.          This applies to both html exports and carts running on the BBS.
+
+
+    fetch(filename, options)
+
+        Return a lua object stored in a given file. Returns the object and metadata.
+
+        options is a table used for http requests:
+
+        .on_complete callback when fetching http (means that fetch is not blocking) .method
+
+
+    store_metadata(filename, metadata)
+
+    fetch_metadata(filename)
+
+        Store and fetch just the metadata fork of a file or directory. This can be faster in some 
+        cases.
+
+
+    mkdir(name)
+
+        Create a directory
+
+
+    ls([path])
+
+        list files and folders in given path relative to the current directory.
+
+
+    cp(src, dest)
+
+        Copy a file from src to dest. Folders are copied recursively, and dest is overwritten.
+
+
+    mv(src, dest)
+
+        Move a file from src to dest. Folders are moved recursively, and dest is overwritten.
+
+
+    rm(filename)
+
+        Delete a file or folder (recursive).
+
+        Mount points are also deleted, but the contents of their origin folder are not deleted 
+        unless explicitly given as a parameter to rm.
+
+
+    pwd()
+
+        Return the present working directory. Relative filenames (that do not start with "/") all 
+        resolve relative to this path.
+
+
+    cd(path)
+
+        Change directory.
+
+
+    fullpath(filename)
+
+        Resolve a filename to its canonical path based on the present working directory (pwd()).
+
+
+    fstat(filename)
+
+        returns 3 attributes of given filename (if it exists):
+
+        string: "file" or "folder"
+        number: size of file
+        string: origin of path
+
+
+    include(filename)
+
+        Load and run a lua file.
+
+        The filename is relative to the present working directory, not the directory that the file 
+        was included from.
+
+        Note that include() is quite different from PICO-8's #include, although it is used in a 
+        similar way. The difference is that include() is a regular function that is called at 
+        runtime, rather than PICO-8's #include which inserts the raw contents of the included file 
+        at the preprocessing stage.
+
+        include(filename) is roughly equivalent to:
+
+        load(fetch(filename))()
+
+    :: File Sandboxing
+
+        A sandboxed process only has limited access to the filesystem. This allows untrusted 
+        cartridges to be run  without risk of messing up other parts of the system (e.g. a 
+        malicious or buggy bbs cart might try to  rm("/desktop")). 
+
+        All BBS carts (e.g. bbs://foo.p64) are run sandboxed; they are only allowed to write to 
+        /appdata (which is  mapped to /appdata/bbs/{bbs_id}), and /appdata/shared. They can also 
+        only read from themselves, /system and  /ram/shared.
+
+        When a cartridge is copied from the BBS to local filesystem (e.g. desktop), it is given 
+        some metadata so  that it continues to run sandboxed in the same way: .sandbox = "bbs" and 
+        .bbs_id (the cart id). It can be un-sandboxed using the about tool and unchecking 
+        "sandbox", or by using "load -u #foo"
+
+        To sandbox a cartridge during development to see how it will behave on the BBS, type "about 
+        /ram/cart" from  the commandline and check the sandbox field to get a dummy bbs id starting 
+        with an underscore that can be used for testing.
+
+        Any files opened via the open command (/system/util/open.lua) are additionally accessible 
+        from sandboxed processes, as are files drag-and-dropeed into the app window, and files 
+        chosen via the file open dialogue. In short: access to arbitrary locations is given to 
+        sandboxed apps when the user performs an action that  shows clear intent to allow it.
+
+        For more details, see: 
+        https://www.lexaloffle.com/dl/docs/picotron_filesystem.html#Sandboxing
+
+----------------------------------------------------------------------------------------------------
+    System
+----------------------------------------------------------------------------------------------------
+
+
+    printh(str)
+
+        print a string to the host operating system's console for debugging.
+
+
+    env()
+
+        Returns a table of environment variables given to the process at the time of creation.
+
+        ?pod(env()) -- view contents of env()
+
+
+    error([description])
+
+        Cause a crash showing description (a string) at the top of the stack trace.
+
+
+    stop([message])
+
+        Halt the program and print a message to terminal. This is meant to be used during 
+        development,  when running the present working cart with ctrl-r.
+
+        Unlike @error, stop() does not cause a crash but simply suspends the program. It can still 
+        be resumed from terminal ("> resume") when it is the present working cartridge.
+
+
+    exit()
+
+        Immediately end the program. This can be used to terminate a terminal program early.
+
+        s = input("would you like to continue? [y/n] ")
+        if (s == "n") exit(0)
+
+
+    assert(condition, [message])
+
+        if condition is false, stop the program and print message if it is given. this can be 
+        useful for debugging cartridges, by assert()'ing that things that you expect to be true are 
+        indeed true.
+
+        assert(actor)      --  actor should exist and be a table
+        actor.x += 1       --  definitely won't get a "referencing nil" error
+
+
+    time()
+
+    t()
+
+        Returns the number of seconds elapsed since the cartridge was run.
+
+        This is not the real-world time, but is calculated by counting the number of times 
+        _update60 is called. multiple calls of time() from the same frame return the same result.
+
+
+    date(format, t, delta)
+
+        Returns the current day and time formatted using Lua's standard date strings.
+
+        format: specifies the output string format, and defaults to "!%Y-%m-%d %H:%M:%S" (UTC) when 
+        not given.  Picotron timestamps stored in file metadata are stored in this format.
+
+        t: specifies the moment in time to be encoded as a string, and can be either an integer 
+        (epoch timestamp) or a string indicating UTC in the format: "!%Y-%m-%d %H:%M:%S". When t is 
+        not given, the current time is used.
+
+        delta: number of seconds to add to t.
+
+        -- show the current UTC time (use this for timestamps)
+        ?date()
+         
+        -- show the current local time
+        ?date("%Y-%m-%d %H:%M:%S")
+         
+        -- convert a UTC date to local time
+        ?date("%Y-%m-%d %H:%M:%S", "2024-03-14 03:14:00")
+         
+        -- local time 1 hour ago
+        ?date("%Y-%m-%d %H:%M:%S", nil, -60*60)
+
+
+    get_clipboard()
+
+    set_clipboard(text)
+
+        Read and write the contents of the clipboard. The value is always a single string; to copy 
+        structured objects to the clipboard, use @pod() and @unpod(). 
+
+        For security reasons, get_clipboard() only has access to the host clipboard after ctrl-v is 
+        pressed while Picotron is active. Until ctrl-v is pressed, changes to the host clipboard 
+        have no effect on the return value of get_clipboard(). The same is true for sandboxed 
+        applications (e.g. bbs carts):  they are only able to access clipboard contents from other 
+        processes once ctrl-v is pressed while that  app has keyboard focus.
+
+        out = "[output]\n"
+        function _update()
+             
+            if key"ctrl" and keyp"c" then
+                local test_str = "test"..flr(rnd(10000))
+                set_clipboard(test_str)
+                out ..= "ctrl-c copied: "..test_str.."\n"
+            end
+             
+            if key"ctrl" and keyp"v" then
+                out ..= "ctrl-v pasted: "..get_clipboard().."\n"
+            end
+             
+            -- this will only work for clipboard contents that is copied from within Picotron 
+            -- (or within the same app when sandboxed), unless pasted with ctrl-v first.
+            if key"ctrl" and keyp"b" then
+                out ..= "ctrl-b pasted: "..get_clipboard().."\n"
+            end
+        end
+        function _draw()
+            cls()
+            print(out, 2,2,7)
+        end
+
+
+    stat(x)
+
+        Get system status where x is:
+
+          0  memory usage        // triggers a garbage collection
+          1  cpu usage           // try to stay under ~0.9 to maintain 60fps)
+          2  reserved
+          3  raw mememory usage  // no GC, so value jumps around)
+          5  runtime, system version
+          7  operating fps (60,30,20,15)
+         86  epoch time
+         87  timezone delta in seconds
+        101  web: player cart id (when playing a bbs cart; nil otherwise)
+        150  web: window.location.href
+        151  web: stat(150) up to the end of the window.location.pathname
+        152  web: window.location.host
+        153  web: window.location.hash
+
+
+    send_message(proc_id, msg, [reply])
+
+        send a message to process proc_id. msg is a table that should include at least an "event" 
+        field that is used to identify a matching event handler in the receiving process (see 
+        @on_event).
+
+        -- send a harmless message to the window manager (that will be ignored)
+        send_message(3, {event="hi"})
+
+        When reply is true, send_message blocks until the process responds with a reply. For 
+        example, paste the following in to terminal to set up a headless process that responds to 
+        "get_id" messages:
+
+        store("/ram/get_id.lua", [[
+            id = 1 
+            function _update() end 
+            on_event("get_id", function() id += 1 return {id = id}  end)
+        ]])
+        pid2 = create_process("/ram/get_id.lua")
+
+        A unique id can be fetched from this process with:
+
+        ?send_message(pid2, {event = "get_id"}, true).id
+
+        Note that blocking in this way can be quite slow -- it is intended to be used in situations 
+        where it is  acceptable to skip a frame or two while waiting for a reply.
+
+        When reply is a function, the event handler of the receiving process can reply with another 
+        message that is handled by that function.
+
+
+    on_event(event, func)
+
+        create an event handler for the current process. event is a string that matches the event 
+        field of the message, and func is a function that handles the message:
+
+        -- set up a hanlder
+        on_event("foo", function(msg)
+            printh("foo received: "..pod(msg))
+        end)
+
+        -- send a message to self; send_message(pid(), {msg="foo", num=3})
+
+        func can return true to indicate that no further events of this type should be processed by 
+        other handlers -- for example a "click" event should be ignored by other elements that have 
+        their own click handlers.
+
+----------------------------------------------------------------------------------------------------
+    Memory
+----------------------------------------------------------------------------------------------------
+
+    Each process in Picotron has a limit of 32MB RAM, which includes both allocations for Lua 
+    objects, and  data stored directly in RAM using memory functions like poke() and memcpy(). In 
+    the latter case, 4k pages  are allocated when a page is written, and can not be deallocated 
+    during the process lifetime.
+
+    Only 16MB of ram is addressable: 0x000000..0xffffff. Memory addresses below 0x80000 and above 
+    0xf00000 are  mostly reserved for system use, but anything in the 0x80000..0xefffff range can 
+    be safely used for arbitrary  purposes.
+
+    :: Memory Layout
+
+    0x000000 ~ 0x003fff    Legacy PICO-8 range, but probably safe to use!
+    0x004000 ~ 0x0047ff    Primary P8SCII Font (2k)
+    0x005000 ~ 0x0053ff    ARGB display palettes (1k)
+    0x005400 ~ 0x005477    Per-scanline rgb display palette selection (120 bytes)
+    0x005480 ~ 0x0054bf    Indexed display palette (64 bytes)
+    0x0054c0 ~ 0x00553f    Misc draw state (128 bytes)
+    0x005580 ~ 0x0055ff    Raw controller state (128 bytes)
+    0x005600 ~ 0x005dff    Secondary P8SCII font (2k)
+    0X005e00 ~ 0x005eff    Reserved: P8 persistent state (256 bytes)
+    0x005f00 ~ 0x005f7f    P8 draw State (some used by Picotron)
+    0x005f80 ~ 0x007fff    Reserved: legacy P8 gpio, video memory
+    0x008000 ~ 0x00bfff    Colour tables (16k)
+    0x00c000 ~ 0x00ffff    Reserved (16k)
+    0x010000 ~ 0x02ffff    Display / Draw Target (128k)
+    0x030000 ~ 0x07ffff    Default audio data range
+    0x080000 ~ 0xefffff    Available for arbitrary use
+    0xf00000 ~ 0xffffff    Wavetable data
+
+
+    peek(addr, [n])
+
+        read a byte from an address in ram. if n is specified, peek() returns that number of 
+        results (max: 65536). for example, to read the first 2 bytes of video memory:
+
+            a, b = peek(0x10000, 2)
+
+
+    poke(addr, val1, val2, ...)
+
+        write one or more bytes to an address in base ram. if more than one parameter is provided, 
+        they are written sequentially (max: 65536).
+
+
+    peek2(addr)
+
+    poke2(addr, val)
+
+    peek4(addr)
+
+    poke4(addr, val)
+
+    peek8(addr)
+
+    poke8(addr, val)
+
+        i16,i32 and i64 versions.
+
+
+    memcpy(dest_addr, source_addr, len)
+
+        copy len bytes of base ram from source to dest. sections can be overlapping (but is slower)
+
+
+    memset(dest_addr, val, len)
+
+        write the 8-bit value val into memory starting at dest_addr, for len bytes.
+
+        for example, to fill half of video memory with 0xc8:
+
+        > memset(0x10000, 0xc8, 0x10000)
+
+----------------------------------------------------------------------------------------------------
+    Windows
+----------------------------------------------------------------------------------------------------
+
+    Each process in Picotron has a single window, and a single display that always matches the size 
+    of  the window. The display is a u8 userdata that can be manipulated using the regular userdata 
+    methods, or using the gfx api while the display is also the draw target.
+
+    When a program has a _draw function but a window does not exist by the end of _init(), a 
+    fullscreen display and workspace is created automatically. To explicitly create a fullscreen 
+    display before then,  window() with no parameters can be used.
+
+    Although switching between fullscreen and windowed modes is possible, the window manager does 
+    not yet support that and will produce unexpected results (a window in a fullscreen workspace, 
+    or a fullscreen window covering the desktop).
+
+
+    get_display()
+
+        Returns the current display as a u8, 2d userdata. There is no way to set the display 
+        userdata directly; it can be resized using the window() function.
+
+
+    set_draw_target(ud)
+
+    get_draw_target()
+
+        Set the draw target to ud, which must be a u8, 2d userdata. When ud is not given, 
+        set_draw_target() defaults to the current display.
+
+
+    window(attribs)
+
+    window(width, height)
+
+        Create a window and/or set the window's attributes. attribs is table of desired attributes 
+        for the window:
+
+        window{
+            width      = 80,
+            height     = 160,
+            resizeable = false,
+            title      = "Palette"
+        }
+        function _draw()
+            cls(7)
+            for y=0,7 do
+                for x=0,3 do
+                    circfill(10 + x * 20, 10 + y * 20, 7, x+y*4)
+                end
+            end 
+        end
+
+        width       --  width in pixels (not including the frame)
+        height      --  height in pixels
+        title       --  set a title displayed on the window's titlebar
+        pauseable   --  false to turn off the app menu that normally comes up with ENTER
+        tabbed      --  true to open in a tabbed workspace (like the code editor)
+        has_frame   --  default: true
+        moveable    --  default: true
+        resizeable  --  default: true
+        wallpaper   --  act as a wallpaper (z defaults to -1000 in that case)
+        autoclose   --  close window when is no longer in focus or when press escape
+        z           --  windows with higher z are drawn on top. Defaults to 0
+        cursor      --  0 for no cursor, 1 for default, or a userdata for a custom cursor
+        squashable  --  window resizes itself to stay within the desktop region
+        background_updates --  allow _update() callbacks when parent window is not visible
+        background_draws   --  allow _draw() callbacks when parent window is not visible
+
+    System cursors are named, and can be requested using a string: 
+
+        pointer    hand with a finger that presses down while mouse button is pressed
+        grab       open hand that changes into grabbing pose while mouse button is pressed
+        dial       hand in a dial-twirling pose that disappears while mouse button is held down
+        crosshair  
+
+    To hide the mouse cursor:
+
+        window{cursor = 0}
+
+
+    vid(video_mode)
+
+        Set a fullscreen video mode. Currently supported modes:
+
+        vid(0) -- 480x270
+        vid(3) -- 240x135
+        vid(4) -- 160x90
+
+----------------------------------------------------------------------------------------------------
+    Undo Stacks
+----------------------------------------------------------------------------------------------------
+
+    An undo stack is a collection of "patches" that can be applied to get from the current state of 
+    a program back to earlier states ("checkpoints"), typically when the user presses ctrl-z some 
+    number  of times. Picotron provides a simple undo stack implementation that uses uses @pod() to 
+    view each checkpoint as a string, and then @create_delta() to store the incremental changes 
+    between them.
+
+    A minimal example of undo stacks can be found in /system/demos/tinypaint.p64
+
+
+    create_undo_stack(save, load, [pod_flags], [item])
+
+        save is a function that returns a single value that represents the program state (often a 
+        table).
+
+        load is a function that restores the state of the program given the same value that was 
+        passed to save at that checkpoint.
+
+        pod_flags is the argument given to pod() when storing the state. The default is 0x81 
+        (rle-compressed  userdata) which works well in most cases.
+
+        item is an optional arbitrary value that is passed to the provided save and load functions. 
+        It is normally used to identity which data in the program to operate on, when multiple undo 
+        stacks are used (for example, which sprite in a sprite editor that has one undo stack per 
+        sprite).
+
+
+    stack:checkpoint([extra])
+
+        Add an item to the undo stack by calling the stack's save function.
+
+        extra is an optional arbitrary value associated with that checkpoint that is returned by 
+        :undo and :redo. To read the extra value without actually appying the checkpoint, use 
+        :undo(true) or :redo(true).
+
+
+    stack:redo()
+
+    stack:undo()
+
+        Call these when the user presses ctrl-z, ctrl-y
+
+        A checkpoint delta is popped off the undo (or redo) stack and the stack's load function is 
+        called to  restore the program state to that checkpoint.  
+
+    An example of a program with unlimited undo can be found at /system/demos/tinypaint.p64
+
+    It creates an image userdata called "page", and an undo stack to create checkpoints for page's 
+    state:
+
+    page = userdata("u8",160,120)
+    stack = create_undo_stack(
+        function() return page end,        -- return the undoable data
+        function(dat) blit(dat, page) end  -- restore undoable data given dat
+    )
+
+    A checkpoint is added when the mouse is pressed:
+
+    if (mb ~= 0 and last_mb == 0) stack:checkpoint()
+
+    Finally, undo/redo deltas are applied to the image when ctrl-x, ctrl-v is pressed:
+
+    if key"ctrl" then
+        if (keyp"z") stack:undo()
+        if (keyp"y") stack:redo()
+    end
+
+----------------------------------------------------------------------------------------------------
+    Sockets
+----------------------------------------------------------------------------------------------------
+
+    Sockets allow Picotron to send data to other machines (or local programs) that support the same 
+    type of socket;  currently TCP and UDP is supported. There is currently no web support, but web 
+    sockets will be added in the future.
+
+
+    socket(addr)
+
+        Create a socket.
+
+        addr is a string consisting of the protocol (tcp:// or udp://), the ip address, followed by 
+        a  port number ":1234". ipv6 addresses should be enclosed in square brackets. For example:
+
+        sock = socket("tcp://example.com:80")
+        sock:write("GET / HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n")
+        ?sock:read()
+
+        To create a socket that listens to any incoming traffic on a given port, use * for the 
+        address:
+
+        sock = socket("udp://*:8899")
+
+        A socket with remote hosts writing (or connecting to) that port can then be accepted using 
+        sock:accept().
+
+        Listener sockets can not be created while a process is sandboxed. i.e. BBS carts can 
+        proactively connect  to a particular address, but can not receive connections from 
+        arbitrary sources.
+
+
+    sock:read()
+
+        read a string from a socket. This function is not blocking; it will return nothing when 
+        there is no data available on the socket.
+
+        Returns the number of bytes written, or nil followed by an error message string.
+
+
+    sock:write(str)
+
+        write string str to socket. 
+
+        Returns the number of bytes written, or nil followed by an error message string.
+
+
+    sock:close()
+
+        Close the connection if there is one.
+
+
+    sock:status()
+
+        Returns a string describing the sockets status:
+
+        - "ready" means the socket that is ready to read/write to a given address
+        - "listening" means the socket was created with a wildcard address and ready to :accept() connections
+        - "closed" means :close() was called on the socket
+        - "closed by peer" means that the peer closed the connection (happens after attempt to :read)
+        - "disconnected" means the socket was closed for some other reason
+
+
+    sock:accept()
+
+        This can be used with sockets that are listening to all traffic on a given port. When a new 
+        connection is made with tcp, or a UDP message is receieved from a new address+port, 
+        :accept() will return a new socket that can be used to communicate with that particular 
+        client, or nil if none found.
+
+        Here is an example of a server that receives messages from multiple clients:
+
+        -- server (paste in terminal window)
+        listener = socket("tcp://*:8899")
+        if (not listener) print("** could not create socket")
+        local clients = {}
+        print("")
+        while (listener) do
+            print("\rlistening \f8"..("-\\|/")[1+(time()*4%4)\1])
+            local new_client = listener:accept()
+            if (new_client) then 
+                print("\r\fcnew client!") print("")
+                add(clients, new_client)
+            end
+            for client in all(clients) do
+                local dat = client:read()
+                if (dat) print("\rmessage: "..dat) print""
+            end
+        end
+
+        Open another terminal window and connect to the local server:
+
+        s = socket("tcp://localhost:8899")
+
+        Now data can be sent to the server by writing to the socket:
+
+        s:write("hi!")
+
+====================================================================================================
+    Userdata
+====================================================================================================
+
+    Userdata in Picotron is a fixed-size allocation of memory that can be manipulated as a 1d or 2d 
+    array of typed data. It is used to repesent many things in Picotron: vectors, matrices, to 
+    store sprites, maps and the contents of display. Therefore, all of these things can be 
+    manipulated with the userdata API. It is also possible to expose the raw binary contents  of a 
+    userdata to RAM (by giving it an address with @memmap), in which case userdata API can be used 
+    to directly manipulate the contents of RAM.
+
+    :: Userdata Access
+
+    u = userdata("i16", 4, 8)  --  a 4x8 array of 16-bit signed integers
+    u:set(2,1,42)              --  set the elements at x=2, y=1 to 42
+    ?#u                        --  the total number of elements (32)
+
+    Userdata can be indexed as a 1d array using square brackets, and the first 7 elements of a 
+    userdata can be accessed using special names: x y z u v w t.
+
+    The following assignments and references are equivalent for a 2d userdata of width 4:
+
+    u:set(2,1,42)
+    u[6] = 42
+    u.t  = 42
+     
+    ?u:get(2,1)
+    ?u[6]
+    ?u.t
+
+
+    userdata(data_type, width, height, [data])
+
+        Create a userdata with a data type: "u8", "i16", "i32", "i64", or "f64". The first 4 are 
+        integers which are unsigned (u) or signed(i), and with a given number of bits. The last one 
+        is  for 64-bit floats, and can be used to implement vectors and matrices.
+
+        data is a string of hexadecimal values encoding the initial values for integer values, or a 
+        list of f64s separated by commas.
+
+        A 2d 8-bit userdata can also be created by passing a PICO-8 [gfx] snippet as a string (copy 
+        and paste from PICO-8's sprite editor):
+
+        s = userdata("[gfx]08080400004000444440044ffff094f1ff1944fff9f4044769700047770000a00a00[/gfx]")
+        spr(s, 200, 100)
+
+
+    vec(...)
+
+        A convenience function for constructing 1d vectors of f64s.
+
+        v = vec(1.0,2.0,3.5)
+        -- equivalent to:
+        v = userdata("f64", 3)
+        v:set(0, 1.0,2.0,3.5)
+
+
+    userdata:width()
+
+    userdata:height()
+
+        returns the width, height of a userdata
+
+        height() returns nil for a 1d userdata.
+
+        ?userdata(get_display():width()) -- width of current window
+
+
+    userdata:attribs()
+
+        returns the width, height, type and dimensionality of a userdata. Unlike :height(), 
+        :attribs() returns 1 as the height for 1d userdata.
+
+
+    userdata:get(x, n)
+
+    userdata:get(x, y, n)
+
+        Return n values starting at x (or x, y for 2d userdata), or 0 if out of range.
+
+        ?get_display():get(20, 10) -- same as ?pget(20, 10)
+
+
+    userdata:set(x, val0, val1, ..)
+
+    userdata:set(x, y, val0, val1, ..)
+
+        Set one or more value starting at x (or x, y for 2d userdata).
+
+        Values set at locations out of range are clipped and have no effect.
+
+        get and set are also available as global functions: set(u,0,0,3) is the same as 
+        u:set(0,0,3). When the global set() is passed a nil userdata, no error or action is 
+        performed.
+
+
+    userdata:row(i)
+
+    userdata:column(i)
+
+        Return a row or column of a 2d userdata (0 is the first row or column), or nil when out of 
+        range.
+
+
+    userdata:blit(dest, src_x, src_y, dest_x, dest_y, width, height)
+
+    blit(src, dest, src_x, src_y, dest_x, dest_y, width, height)
+
+        Copy a region of one userdata to another. The following copies a 8x7 pixel region from 
+        sprite 0 to the  draw target at 100, 50:
+
+        blit(get_spr(0), get_draw_target(), 0, 0, 100, 50, 8, 7)
+
+        Both src and dest must be the same type.
+
+        When dest is the draw target, the current clipping state is applied. Otherwise no clipping 
+        is performed (except to discard writes outside the destination userdata). In either case, 
+        no other aspects of the draw state are observed, and it is much faster than an equivalent 
+        sspr call.
+
+        All arguments are optional: width and height default to the src width and height, and the 
+        two userdata parameters default to the current draw target.
+
+        Overlapping regions of the same source and destination userdata is allowed, but such blits 
+        cost 4 times as much  cpu when src_y == dest_y.
+
+
+    userdata:mutate(data_type, [width], [height])
+
+        Change the type or size of a userdata. When changing data type, only integer types can be 
+        used.
+
+        The binary contents of the userdata are unchanged, but subsequent operations will treat 
+        that data using the new format:
+
+        > ud = userdata("i32", 2, 2)
+        > ud:set(0,0, 1,2,3,-1)
+        > ?pod{ud:get()}
+        {1,2,3,-1}
+        > ud:mutate("u8", 8,2)
+        > ?pod{ud:get()}
+        {1,0,0,0,2,0,0,0,3,0,0,0,255,255,255}
+
+        The total data size given by the new data type and dimensions must be the same as or 
+        smaller than the old one. In the above example, the userdata starts with 2x2 i32's (16 
+        bytes) and is changed to 8x2 u8's (also 16 bytes).
+
+        When the width and height is not given, the existing width is used multiplied by the ratio 
+        of old data type size to new one, and the existing height is used as-is. Note that this can 
+        result in a loss of total data size when the width is not evenly divisible.
+
+        > ud = userdata("u8", 200, 50)
+        > ud:mutate("i64")
+        > ?{ud:attribs()}
+        {25,50,"i64",2}
+
+
+    userdata:lerp(offset, len, el_stride, num_lerps, lerp_stride)
+
+        linearly interpolate between two elements of a userdata
+
+        offset is the flat index to start from (default: 0)
+
+        len is the length (x1-x0) of the lerp, including the end element but not the start element.
+
+        el_stride is the distance between elements (default: 1)
+
+        Multiple lerps can be performed at once using num_lerps, and lerp_stride. lerp_stride is 
+        added to offset after each lerp.
+
+        > v = vec(2,0,0,0,10):lerp()
+        ?pod{v:get()} -- 2,4,6,8,10
+        > v = vec(0,2,0,4,0):lerp(1,2)
+        ?pod{v:get()} -- 0,2,3,4,0
+        > v = vec(2,0,0,0,10):lerp(0,2,2)
+        ?pod{v:get()} -- 2,0,6,0,10
+        > v = vec(1,0,3,0,10,0,30):lerp(0,2,1, 2,4)
+        ?pod{v:get()} -- 1,2,3, 0, 10,20,30
+
+
+    userdata:convert(data_type, [dest])
+
+        Return a copy of userdata cast as a different type. When converting to ints, f64 values are 
+        flr()'ed and out of range values overflow.
+
+        v = vec(5.3, 5.7, 257)
+        ?pod{v:convert("u8"):get()} -- {5,5,1}
+
+
+    userdata:sort(index, descending)
+
+        Sort a 2d userdata of any type by the value found in the index column (0 by default).
+
+        When descending is true, sort from largest to smallest.
+
+        scores = userdata("i32", 2, 3)
+        scores:set(0,0,   3,2000,  4,4000,  7,3000)
+        scores:sort(1, true) -- sort by second column descending
+        ?pod{scores:get()} -- {3,2000, 7,3000, 4,4000)
+
+----------------------------------------------------------------------------------------------------
+    Userdata Operations
+----------------------------------------------------------------------------------------------------
+
+    Userdata can be used with arithmetic operators, in which case the operator is applied per 
+    element:
+
+    v = vec(1,2,3) + vec(10,20,30)
+    ?v -- (11.0,22.0,33.0)
+
+    When one of the terms is a scalar, that value is applied per element:
+
+    v = vec(1,2,3) + 10
+    ?v -- (11.0, 12.0, 13.0)
+    v = vec(1,2,3) / 2
+    ?v -- (0.5,1.0,1.5)
+
+    Supported operators for any userdata type: + - * / % ^
+     
+    Bitwise operators for integer userdata types:      & | ^^
+
+    Each operator has a corresponding userdata metamethod that can take additional parameters (see 
+    @userdata:op):
+
+    :add :sub :mul :div :mod :pow :band :bor :bxor
+
+    Additional operation metamethods that do not have a corresponding operator:
+
+    :max   --  return the largest of each element / scalar
+    :min   --  return the smallest of each element / scalar
+
+    Additional unary operation metamethods that ignore the src parameter: 
+
+    :copy  --  equivalent to :add(0, ...) :abs   --  abs(x) for each element (except: int_min -> 
+    int_min, not int_max) :sgn   --  returns -1 for negative values and 1 for positive values and 
+    zero :sgn0  --  returns -1 for negative values and 1 for positive values, and 0 for zero
+
+
+    userdata:op(src, dest, src_offset, dest_offset, len, src_stride, dest_stride, spans)
+
+    Applies operator op (add, mult etc) to each element and written to a new userdata. All 
+    parameters are optional.
+
+    For each element, the LHS is taken from the calling userdata, and the RHS is taken from the 
+    "src" userdata:
+
+    dest_val = ud_val {op} src_val
+
+    For example, the following divides each value in a userdata by a value from src:
+
+    ?vec(1,2,3):div(vec(2,2,10))  -- (0.5, 1.0, 0.3)
+    ?vec(1,2,3) / vec(2,2,10)     -- same thing
+
+    ud or src can be a number in which case that number is used as the LHS / RHS operand for each 
+    element:
+
+    v = vec(1,2,3)
+    v = v:add(10) -- add 10 to each element -- same as v += 10
+
+    dest is an optional output userdata, which can be the boolean value true to mean "write to 
+    self". This can be  used to avoid the cpu overhead of creating new userdata objects.
+
+    dest must be the same shape as the calling userdata, otherwise nil is returned. This is because 
+    c = a:div(b) should give the same result as a:div(b,c) for the modified elements.
+
+    v:add(10, v)    -- add 10 to each element of v, written in-place
+    v:add(10, true) -- same thing
+
+    :: Partial Operations
+
+    Flat offsets into src and dest can be given, as well as a number of elements to process (len).
+
+    When operations are applied to a partial subset of elements, the remaining elements are not 
+    modified. This means that any existing values in the calling userdata (or in dest when dest is 
+    given) can carry over.
+
+    For example, in the following call to :mul, only the 2 elements are modified starting from 
+    offset 1:
+
+    out = vec(0,1,2,3,4):mul(100, nil, 0, 1, 2) 
+    ?out  -- (0,100,200,3,4)
+
+    When dest is given, the same rule applies.
+
+    out = vec(5,6,7,8,9)
+    vec(0,1,2,3,4):mul(100, out, 0, 1, 2)
+    ?out -- (5,100,200,8,9)
+
+    :: Stride
+
+    The last 3 parameters (src_stride, dest_stride and spans) can be used together to apply the 
+    operation to multiple, non-contiguous spans of length len. src_stride, and dest_stride specify 
+    the number of elements between the start of each span for src and dest respectively. Both are 
+    expressed as flat indices (i.e.  for 2d userdata the element at x,y has a flat index of x + y * 
+    width).
+
+    This is easier to see with a visual example:
+
+    foo = userdata("u8", 4, "01020304")
+     
+    function _draw()
+        cls()
+        circfill(240 + t()*10,135,100,7)
+        get_display():add(foo, true, 0, 0, 4,  0, 16, 10000)
+    end
+
+    This is an in-place operation -- reading and writing from the display bitmap (which is a 2d 
+    userdata).
+
+    It modifies the first 4 pixels in each group of 16, 10000 times (so 40000 pixels are modified).
+
+    First, 1 is added to the first pixel, 2 to the second, up to the 4th pixel. The second span 
+    starts at the 16th pixel, and reading again from the start of foo (because the stride for src 
+    is 0), which means the same 4 values are added for every span.
+
+    Note that this example is a pure userdata operation -- no graphical clipping is performed 
+    except to stay  within the linear range of each input userdata.
+
+    :: Overlapping Evaluations
+
+    Userdata operations that have overlapping regions are allowed, and are always calculated left 
+    to right. This means that when the src and dest userdata are the same, some elements may be 
+    read after they have  already been modified at some point earlier in the operation, and that 
+    new value is then used for another  calculation.
+
+    In the following example, the destination offset is 1, which means that the first calculation 
+    is a[1]= a[1]+a[0], and then a[2]=a[2]+a[1] and so on. The result is that each element is 
+    evaluated to the sum of itself plus all of the elements before it:
+
+    > a = vec(1,2,5,200)
+    > a:add(a,true,0,1)
+    > ?pod{unpack(a)}
+    {1,3,8,208} -- 1, 2+1, 5+2+1, 200+5+2+1
+
+    :: CPU Costs
+
+    Operations on userdata cost 1 cycle for every 24 operations, except for mult (16 ops), div/mod 
+    (4 ops), pow (2 ops), and operations that do a compare (4), plus any overhead for the function 
+    call itself.
+
+    :: Copy with Lookup Table
+
+
+    userdata:copy(idx, dest, idx_offset, dest_offset, len, idx_stride, dest_stride, spans)
+
+    ** this form will be deprecated in 0.1.2 -- use :take instead with the same parameters.
+
+    When :copy is given a table as the first argument (after self), it is taken to be a lookup 
+    table into that userdata for the start of each span.	
+
+
+    userdata:take(idx, dest, idx_offset, dest_offset, span_len, idx_stride, dest_stride, spans)
+
+    Take values from the userdata at locations specified by idx. 
+
+    idx is a i32 userdata, where each value is a flat index into the userdata. When dest is not 
+    specified, the userdata returned by :take is the same shape as idx.
+
+    src = vec(0,10,20,30,40)
+    idx = userdata("i32",4,2) 
+    idx:set(0,0, 0,2,4,0,2,4,1,3) -- flat indexes into src
+    dest = src:take(idx) -- grab 8 values
+    ?pod{dest:get()} -- 0,20,40,0,20,40,10,30
+
+    When dest (a userdata of the same type) is given, values are written starting at dest_offset, 
+    also a flat index.
+
+    Multiple spans can be specified the same way as other userdata operations. Each value in idx 
+    specifies the start index of a span,  and span_len elements are copied from that position in 
+    the calling userdata.
+
+    The default span_len is 1, in which case the default shape of the output is the same as the 
+    shape of idx.
+
+    idx_stride is applied between each index, and defaults to 1.
+
+    dest_stride is applied after writing each span. It defaults to span_len.
+
+    To take 3 spans from src, each of length 4:
+
+    src = vec(0,1,2,3,4,5,6,7)
+    idx = userdata("i32",3)
+    idx:set(0, 3,1,4)
+    dest = src:take(idx,nil, 0,0, 4)
+
+    When the length of each span is > 1, the default shape of the output is a row for each span. In 
+    this case, there are 3 spans starting at positions 3,1 and 4 -- each each span is 4 values. So 
+    the resulting userdata is 4x3:
+
+    3 4 5 6
+    1 2 3 4
+    4 5 6 7
+
+----------------------------------------------------------------------------------------------------
+    Matrices and Vectors
+----------------------------------------------------------------------------------------------------
+
+    Matrices and vectors can be represented as 2d and 1d userdata of type f64:
+
+    mat = userdata("f64", 4, 4)
+    set(mat, 0, 0,
+        1, 0, 0, 0,
+        0, 1, 0, 0,
+        0, 0, 1, 0,
+        0, 0, 0, 1)
+     
+    pos = vec(3,4,5)
+    ?pos.x -- 3
+    pos += vec(10,10,10)   -> 13.0, 14.0, 15.0
+    pos *= 2               -> 26.0, 28.0, 30.0
+    ?v
+
+
+    matmul(m0, m1, [m_out], [batch_height])
+
+    Multiply two matrixes together. matmul is part of the userdata metatable, so it can also be 
+    called using the equivalent form: m0:matmul(m1).
+
+    When m_out is given, the output is written to that userdata. Otherwise a new userdata is 
+    created of width m1:width() and height m0:height().
+
+    As per standard matrix multiplication rules, the width of m0 and the height of m1 must match -- 
+    otherwise no result is returned.
+
+    mat = mat:matmul(mat) 
+    v2  = vec(0.7,0.5,0.5,1):matmul(mat) -- vector width matches matrix height
+
+    When batch_height is given, multiple matrices can be multiplied in a single call by packing 
+    them into a userdata that is matrix_height * number_of_matrices high. For example, to batch 
+    multiply 50 4x1 vectors  by a single 4x4 matrix, an 4x50 userdata can be used:
+
+    vecs = userdata("f64", 4, 50)
+    mat = userdata("f64", 4, 4)
+    out = vecs:matmul(mat, nil, 1) -- returns a 4x50 userdata
+
+    When m_out is given for a batch multiply, it should be the same shape as the input userdata.
+
+
+    matmul3d(m0, m1, [m_out], [batch_height])
+
+    For 3d 4x4 transformation matrices, matmul3d can be used.
+
+    matmul3d implements a common optimisation in computer graphics: it assumes that the 4th column 
+    of the matrix is (0,0,0,1), and that the last component of LHS vector (the mysterious "w") is 
+    1. Making these assumptions still allows for common tranformations (rotate, scale, translate), 
+    but reduces the number of multiplies needed, and so uses less cpu.
+
+    matmul3d can be used on any size vector as only the first 3 components are observed, and 
+    anything larger than a 3x4 userdata for the RHS matrix; again, excess values are ignored.
+
+    So apart from the cpu and space savings, matmul3d can be useful for storing extra information 
+    within the same userdata (such as vertex colour or uv), as it will be ignored by matmul3d(). 
+    matmul() is less flexible in this way, as it requires unambiguous matrix sizes.
+
+    See /system/demos/carpet.p64 for an example.
+
+    When batch_height is given, multiple matrices can be multiplied at once by packing them into a 
+    single userdata. matmul3d() accepts batch_height 1 (for multiplying many vectors) or 3 (for 
+    multiplying many matrices). See /system/demos/treegen.p64 for an example of a batch multiply 
+    performed using matmul3d(). 
+
+    :: Vector methods
+
+    :magnitude()
+    :distance(v)
+    :dot(v)
+    :cross(v, [v_out])
+
+    :: Matrix methods
+
+    :matmul(m, [m_out])
+    :matmul2d(m, [m_out])
+    :matmul3d(m, [m_out])
+    :transpose([m_out])
+
+    Like the per-component operation methods, v_out or m_out can be "true" to write to self.
+
+    Matrix methods always return a 2d userdata, even when the result is a single row. They can only 
+    be used with f64 userdata (with the exception of :transpose, that can handle any type).
+
+----------------------------------------------------------------------------------------------------
+    Userdata Memory Functions
+----------------------------------------------------------------------------------------------------
+
+    The contents of an integer-typed userdata can be mapped to ram and accessed using regular 
+    memory functions like peek and memcpy. This can be useful for things like swapping colour 
+    tables in and out efficiently.
+
+
+    memmap(ud, addr)
+
+        Map the contents of an integer-type userdata to ram.
+
+        addr is the starting memory address, which must be in 4k increments (i.e. end in 000 in 
+        hex).
+
+        Userdata does not need to be sized to fit 4k boundaries, with one exception: addresses 
+        below 0x10000 must always be fully mapped, and memmap calls that break that rule return 
+        with no effect.
+
+
+    unmap(ud, [addr])
+
+        Unmap userdata from ram. When an address is given, only the mapping at that address is 
+        removed. This is relevant only when there are multiple mappings of the same userdata to 
+        different parts of memory.
+
+        unmap(ud) is needed in order for a userdata to be garbage collected, as mapping it to ram 
+        counts  as an object reference. Overwriting mappings with @memmap() is not sufficient to 
+        release the reference to the original userdata.
+
+
+    userdata:peek(addr, offset, elements)
+
+    userdata:poke(addr, offset, elements)
+
+        read or write from ram into an integer-typed userdata.
+
+        addr is the address to peek / poke
+
+        offset is the userdata element to start from (flattened 1d index), and len is the number of 
+        elements to peek/poke.
+
+        For example, to poke a font (which is a pod containing a single u8 userdata) into memory:
+
+        fetch("/system/fonts/p8.font"):poke(0x4000)
+
+        Or to load only the first 4 instruments of a .sfx file:
+
+        fetch("foo.sfx"):poke(0x40000, 0x10000, 0x200 * 4)
+
+----------------------------------------------------------------------------------------------------
+    Batch GFX Operations
+----------------------------------------------------------------------------------------------------
+
+    :: Batch GFX Operations
+
+    A userdata can be used to represent lists of arguments to be passed to gfx functions, so that 
+    multiple draws can be made with only the overhead of a single function call.
+
+    This is supported by @pset, @circ, @circfill, @rectfill, @line, @tline3d, and @spr.
+
+    The following draws 3 circles:
+
+    args = userdata("f64", 4, 3)
+    args:set(0,0,
+        100,150,5,12, -- blue circle
+        200,150,5,8,  -- red cricle
+        300,150,5,9)  -- orange circle
+    circfill(args)
+
+
+    gfx_func(p, offset, num, num_params, stride)
+
+    p is the f64 userdata -- normally 2d with a row for each call
+
+    offset is the flat offset into the userdata for the first call. Default: 0
+
+    num is the number of gfx calls to make. Default: p:height()
+
+    num_params is the number of parameters to pass to the gfx function. Default: p:width()
+
+    stride is the number of elements to jump after each call. Default: p:width()
+
+    Batch operations that deal with sprite data always take sprite indexes as input. Use @set_spr 
+    to  assign an index to a userdata if needed.
+
+====================================================================================================
+    Appendix
+====================================================================================================
+
+----------------------------------------------------------------------------------------------------
+    Appendix A: P8SCII Control Codes
+----------------------------------------------------------------------------------------------------
+
+    When printed with @print(), some characters have a special meaning that can be used to alter 
+    things like the cursor position and text rendering style. Control characters in Picotron are 
+    CHR(0)..CHR(15) and can be written as an escaped sequence ("\n" for newline etc.)
+
+    Some of the control codes below take parameters which are written using a scheme that is a 
+    superset of hexadecimal format. That is, '0'..'f' also mean 0..15. But characters after 'f' are 
+    also accepted: 'g' means 16 and so on. Such parameters are written below as P0, P1.
+
+    For example, to print with a blue background ("\#c") and dark gray foreground ("\f5"):
+
+        print("\#c\f5 blue ")
+
+    The only side-effects on the draw state are changes in cursor position and foreground color; 
+    all other attributes are reset each time @print() is called.
+
+    :: Control Codes
+
+        0 "\0"   terminate printing
+        1 "\*"   repeat next character P0 times. ?"\*3a" --> aaa
+        2 "\#"   draw solid background with colour P0 
+        3 "\-"   shift cursor horizontally by P0-16 pixels
+        4 "\|"   shift cursor vertically by P0-16 pixels
+        5 "\+"   shift cursor by P0-16, P1-16 pixels
+        6 "\^"   special command (see below)
+        7 "\a"   audio (see below)
+        8 "\b"   backspace
+        9 "\t"   tab
+        a "\n"   newline
+        b "\v"   decorate previous character (see below)
+        c "\f"   set foreground colour
+        d "\r"   carriage return
+        e "\014" switch to font defined at 0x5600
+        f "\015" switch to primary font at 0x4000
+
+    :: Special Commands
+
+        These commands all start with "\^" and take up to 2 parameters (P0, P1) For example, to 
+        clear screen to dark blue: print("\^c1")
+
+
+            g set cursor position to home h set home to cursor position j jump to absolute P0*4, 
+            P1*4 (in screen pixels) r set rhs character wrap boundary to P0*4 s set tab stop width 
+            to P0*char_w pixels (used by "\t") u underline x set character width  y set character 
+            height             o draw outline; colour: P0 followed by 2 chars of hexadecimal (see 
+            @P8SCII_Outlines)
+
+        :: Rendering mode options  
+
+            // prefix these with "-" to disable: e.g. ?"\^i on \^-i off "
+
+            w wide mode: scales by 2x1 
+            t tall mode: scales by 1x2
+            = stripey mode: when wide or tall, draw only even pixels
+            p pinball mode: wide and tall, drawing only a single pixel in each 2x2 group
+            i invert
+            b border: toggle 1px padding on left and top // on by default
+            # solid background  // off by default, but enabled automatically by \#
+
+        :: Raw memory writes
+
+            The following two commands take 4-character hex parameters:
+
+            @addrnnnn[binstr] poke nnnn bytes to address addr
+            !addr[binstr]     poke all remaining characters to address addr
+
+            For example, to write 4 bytes to video memory halfway down the screen:
+
+            >?"\^@70000004xxxxhello"
+
+        :: One-off characters
+
+            Character data can be specified and printed in-line using \^. followed by 8 bytes of 
+            raw binary data, or \^: followed by 8 2-digit hexadecimal values. The data format is 
+            the same as custom fonts; each byte specifies a row of 1-bit pixel values, with the  
+            low bit on the left.
+
+            \^.[8 chars of raw binary data]
+            \^:[16 chars of hexadecimal]
+
+            To print a cat:
+
+            > ?"\^:447cb67c3e7f0106"
+
+            . and : always render an 8x8 character with no padding. To respect the padding state, 
+            use , and ; instead.
+
+            > ?"\#3\^;447cb67c3e7f0106"
+
+        :: P8SCII Outlines
+
+            The outline command first draws each pixel of the character in up to 8 neighbouring 
+            positions given by an 8-bit bitfield. The bit value for each neighbour starts with low 
+            bits at the top left, and increases  in reading order:
+
+            0x01    0x02    0x04
+            0x08     --     0x10
+            0x20    0x40    0x80 
+
+            The first character after the command "\^o" is the colour, and the following two 
+            characters are  the neighbours bitfield in hexadecimal. For example, to draw a pixel up 
+            to the left of each foreground pixel, the value 0x01 can be used:
+
+            > ?"\^o801hey"
+
+            The following draws a blue pixel to the left,right,top and bottom of each foreground 
+            pixel which corresponds to bits 8+16+2+64 = 90, or 0x08+0x10+0x02+0x40 = 0x5a in hex:
+
+            > ?"\f7\^oc5aoutline"
+
+            Finally, a full outline can be achieved by setting all bits. Outline works in 
+            combination with the tall and/or wide commands but the outline is still drawn one pixel 
+            thick:
+
+            > ?"\fe\^w\^t\^o7ffchunky"
+
+            Drawing an outline costs around twice as much cpu as drawing a non-outlined character.
+
+            The outline colour parameter can be "$" to use the current colour, or "!" to use the 
+            current colour and skip drawing the interior.
+
+            > ?" \f7\^o!ff empty interior"
+
+    The PICO-8 special commands controlling frame flipping (0~9,d) and audio control character \a 
+    is not supported in Picotron.
+
+    :: Decoration Characters
+
+        The control character \v can be used to decorate the last printed character with another 
+        character at a given offset, without needing to otherwise manage the cursor position. After 
+        the decorating character is printed, the previous cursor position is restored.
+
+        The format is \v P0 char, where P0 is a number giving the desired offset, and char is any 
+        character to print at that offset (relative to the previous printed character).
+
+        The offset has x packed into the lowest 2 bits, and starts (-2,-8) in reading order. So 3 
+        means (+1, -8), 4 means (-2, -7) and so on.
+
+        For example, to write "café!", using a comma to draw the acute accent:
+
+            print"\ncafe\v7,!"
+
+        In this case P0 is '7'. So the comma is drawn at:
+
+            x = (7%4)-2 = 1
+            y = (7\4)-8 = -7
+
+    :: Fonts
+
+        A font in Picotron roughly follows the PICO-8 format: a 2k block of data that encodes 256 
+        8x8 character bitmaps.
+
+        The primary font is 2048 bytes of data found at 0x4000, and the secondary font is at 
+        0x5600. The default loaded fonts are  /system/fonts/lil.font and /system/fonts/p8.font 
+        respectively.
+
+        Custom fonts can be be used by directly poking the RAM value (see below), or by loading a 
+        2k block userdata:
+
+        > fetch("/system/fonts/lil_mono.font"):poke(0x4000)
+
+        Each character is an 8x8 bitfield (1 bit/pixel), where starting from the top, each row is a 
+        single byte starting with 0x1 on the left.
+
+        The first 128 bytes (characters 0~15 are never drawn) describe attributes of the font:
+
+            0x5600 character width in pixels (can be more than 8, but only 8 pixels are drawn)
+            0x5601 character width for character 128 and above
+            0x5602 character height in pixels
+            0x5603 draw offset x
+            0x5604 draw offset y
+            0x5605 flags: 0x1 apply_size_adjustments  0x2: apply tabs relative to cursor home
+            0x5606 tab width in pixels (used only when alt font is drawn)
+            0x5607 unused
+
+        The remaining 120 bytes are used to adjust the width and vertical offset of characters 
+        16..255. Each nibble (low nibbles first) describes the adjustments for one characters:
+
+            bits 0x7: adjust character width by 0,1,2,3,-4,-3,-2,-1
+            bit  0x8: when set, draw the character one pixel higher (useful for latin accents)
+
+    :: Default Attributes
+
+        Although attributes are reset every time @print() is called, it is possible to set their 
+        default values by writing to memory addresses 0x5f58..0x5f5b.
+
+        0x5f58 // bitfield
+            0x1  when set to 0x1, bits 1..7 are observed:
+            0x2  padding
+            0x4  wide
+            0x8  tall
+            0x10 solid background
+            0x20 invert
+            0x40 stripey (when wide or tall)
+            0x80 use custom font
+         
+            // e.g. poke(0x5f58, 0x1 | 0x2 | 0x4 | 0x8 | 0x20 | 0x40)  -- pinball everywhere
+
+        0x5f59 char_w   (low nibble), char_h   (high)
+        0x5f5a char_w2  (low nibble), tab_w    (high)
+        0x5f5b offset_x (low nibble), offset_y (high)
+         
+        // any nibbles equal to 0 are ignored
+        // tab_w (global tab width) values are in pixels * char_w
+
