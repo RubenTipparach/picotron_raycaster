@@ -72,7 +72,7 @@ local last_mouse_x = 0
 local last_mouse_y = 0
 
 -- Debug options
-local show_wireframe = true
+local show_wireframe = false
 
 -- Constants
 local MOVE_SPEED = 3
@@ -80,6 +80,10 @@ local JUMP_SPEED = 5
 local GRAVITY = 9.8
 local FRICTION = 0.85
 local WALL_HEIGHT = 2.5
+
+-- Fog settings (depth-based dithering)
+local FOG_START = 10  -- Distance where fog starts
+local FOG_END = 20    -- Distance where fog is maximum
 
 -- Camera settings
 local FOV = 200                  -- Field of view (higher = wider angle, lower = narrower/zoomed)
@@ -96,10 +100,14 @@ local frame_cpu = 0
 
 -- Sprites for textures
 local wall_sprite = 0
-local floor_sprite = 1
+local floor_sprite = 2  -- Swapped with ceiling
+local ceiling_sprite = 1  -- Swapped with floor
 
 -- Load raycaster module (include returns the module)
 local Raycaster = include("raycaster.lua")
+
+-- Load profiler module
+include("profiler.lua")
 
 --[[
   OBJ File Loader
@@ -252,6 +260,9 @@ function _init()
 
     -- Set up window with crosshair cursor
     window{cursor="crosshair"}
+
+    -- Enable profiler (detailed=true, cpu=true)
+    profile.enabled(true, true)
 
     -- Initialize sprites (you should create these in Picotron sprite editor)
     -- sprite-0: wall texture
@@ -478,14 +489,27 @@ function _draw()
     cls(1)  -- clear to dark blue
 
     -- Render floors/ceilings using horizontal spans (draw first, behind walls)
-    Raycaster.render_floors(map, player, floor_sprite)
+    profile("floors")
+    Raycaster.render_floors(map, player, floor_sprite, FOG_START, FOG_END)
+    profile("floors")
+
+    profile("ceilings")
+    Raycaster.render_ceilings(map, player, ceiling_sprite, FOG_START, FOG_END)
+    profile("ceilings")
 
     -- Render walls using raycaster module (now handles its own clipping)
-    Raycaster.render_walls(map, player, wall_sprite)
+    profile("walls")
+    Raycaster.render_walls(map, player, wall_sprite, FOG_START, FOG_END)
+    profile("walls")
+
+    -- Disable color table for UI rendering (restore normal colors)
+    Raycaster.disable_colortable()
 
     -- Draw debug wireframe (toggleable with T key)
     if show_wireframe then
+        profile("wireframe")
         render_debug_lines()
+        profile("wireframe")
     end
 
     -- Draw crosshair
@@ -493,6 +517,9 @@ function _draw()
 
     -- Draw HUD
     draw_hud()
+
+    -- Draw profiler stats
+    profile.draw()
 
     -- Track CPU usage (stat 1 returns CPU usage where 1.0 = 60fps)
     frame_cpu = stat(1)
@@ -770,24 +797,26 @@ function draw_hud()
     print("columns: " .. Raycaster.columns_drawn, 2, 50)
     print("floor spans: " .. Raycaster.floor_spans_drawn, 2, 58, 0)
     print("floor spans: " .. Raycaster.floor_spans_drawn, 2, 58)
+    print("ceiling spans: " .. Raycaster.ceiling_spans_drawn, 2, 66, 0)
+    print("ceiling spans: " .. Raycaster.ceiling_spans_drawn, 2, 66)
 
     -- CPU usage (1.0 = 60fps, 2.0 = 30fps)
     local cpu_str = "cpu: " .. flr(frame_cpu * 100) / 100
-    print(cpu_str, 2, 66, 0)
-    print(cpu_str, 2, 66)
+    print(cpu_str, 2, 74, 0)
+    print(cpu_str, 2, 74)
 
     -- Calculate FPS from CPU (fps = 60 / cpu_usage)
     local fps = 60
     if frame_cpu > 0 then
         fps = flr(60 / frame_cpu)
     end
-    print("fps: " .. fps, 2, 74, 0)
-    print("fps: " .. fps, 2, 74)
+    print("fps: " .. fps, 2, 82, 0)
+    print("fps: " .. fps, 2, 82)
 
     -- Wireframe toggle state
     local wire_state = show_wireframe and "on" or "off"
-    print("wireframe(t): " .. wire_state, 2, 82, 0)
-    print("wireframe(t): " .. wire_state, 2, 82)
+    print("wireframe(t): " .. wire_state, 2, 90, 0)
+    print("wireframe(t): " .. wire_state, 2, 90)
 
     -- Instructions
     -- if not mouse_locked then

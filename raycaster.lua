@@ -13,6 +13,14 @@ local Raycaster = {}
 -- Performance tracking
 Raycaster.columns_drawn = 0
 Raycaster.floor_spans_drawn = 0
+Raycaster.ceiling_spans_drawn = 0
+
+--[[
+  Disable the color table (used after rendering to restore normal colors for UI)
+]]
+function Raycaster.disable_colortable()
+    poke(0x550b, 0x00)  -- Disable color table
+end
 
 --[[
   Clip a wall quad against the view frustum and generate clipped geometry
@@ -103,6 +111,11 @@ local function clip_wall_quad(player, v1, v2, wall_height, fov, near_plane)
     }}
 end
 
+-- Wall columns buffer for batched rendering (480 columns max)
+-- Format: sprite, x1, y1, x2, y2, u1*w1, v1*w1, u2*w2, v2*w2, w1, w2
+local wall_columns = userdata("f64", 11, 480)
+local wall_column_count = 0
+
 --[[
   Render walls using column-based rendering with tline3d
   Properly handles frustum clipping to generate visible geometry
@@ -111,11 +124,16 @@ end
   @param player: player object with position and rotation
   @param wall_sprite: sprite index for wall texture
 ]]
-function Raycaster.render_walls(map, player, wall_sprite)
+function Raycaster.render_walls(map, player, wall_sprite, fog_start, fog_end)
     Raycaster.columns_drawn = 0  -- Reset counter
+    wall_column_count = 0  -- Reset batch counter
 
     local fov = 200  -- Match FOV from main
     local near_plane = 0.1
+
+    -- Fog parameters (default values if not provided)
+    fog_start = fog_start or 10
+    fog_end = fog_end or 20
 
     -- Depth buffer: track closest depth at each X column
     local depth_buffer = {}
@@ -240,18 +258,32 @@ function Raycaster.render_walls(map, player, wall_sprite)
                         y_bottom = 269
                     end
 
-                    -- Draw vertical textured column
+                    -- Add vertical column to batch buffer
                     -- Both U and V need to be multiplied by w for perspective correction
                     if y_bottom > y_top and y_top < 270 and y_bottom > 0 then
-                        tline3d(
-                            wall_sprite,          -- sprite to sample from
-                            x, y_top,             -- top of column (clipped)
-                            x, y_bottom,          -- bottom of column (clipped)
-                            u * w, v_top * w,     -- texture coord at top (u*w, v*w) for perspective
-                            u * w, v_bottom * w,  -- texture coord at bottom (u*w, v*w)
-                            w, w                  -- perspective correction (same w for vertical line)
-                        )
                         Raycaster.columns_drawn = Raycaster.columns_drawn + 1
+
+                        -- Add to batch buffer
+                        local offset = wall_column_count * 11
+                        wall_columns[offset + 0] = wall_sprite
+                        wall_columns[offset + 1] = x
+                        wall_columns[offset + 2] = y_top
+                        wall_columns[offset + 3] = x
+                        wall_columns[offset + 4] = y_bottom
+                        wall_columns[offset + 5] = u * w
+                        wall_columns[offset + 6] = v_top * w
+                        wall_columns[offset + 7] = u * w
+                        wall_columns[offset + 8] = v_bottom * w
+                        wall_columns[offset + 9] = w
+                        wall_columns[offset + 10] = w
+
+                        wall_column_count = wall_column_count + 1
+
+                        -- Flush batch if buffer is full
+                        if wall_column_count >= 480 then
+                            tline3d(wall_columns, 0, wall_column_count)
+                            wall_column_count = 0
+                        end
                     end
                 end  -- end depth test
             end  -- end x loop
@@ -259,346 +291,475 @@ function Raycaster.render_walls(map, player, wall_sprite)
 
         ::continue::  -- Label for backface culling skip
     end  -- end wall loop
+
+    -- Flush remaining wall columns
+    if wall_column_count > 0 then
+        tline3d(wall_columns, 0, wall_column_count)
+    end
 end
 
--- Scanline buffer for batch tline3d calls (11 values per scanline × 270 scanlines)
--- Format: sprite, x1, y1, x2, y2, u1*w1, v1*w1, u2*w2, v2*w2, w1, w2
-local floor_scanlines = userdata("f64", 11, 270)
+--[[
+  Clip a polygon against the near plane
+  Returns array of clipped vertices, or empty if fully clipped
+]]
+local function clip_polygon_near_plane(verts, near_plane)
+    if #verts == 0 then
+        return {}
+    end
+
+    local result = {}
+
+    for i=1,#verts do
+        local v0 = verts[i]
+        local v1 = verts[(i % #verts) + 1]
+
+        local behind0 = v0.z < near_plane
+        local behind1 = v1.z < near_plane
+
+        -- Both in front - add v0
+        if not behind0 then
+            add(result, v0)
+        end
+
+        -- Edge crosses near plane - add intersection point
+        if behind0 ~= behind1 then
+            local t = (near_plane - v0.z) / (v1.z - v0.z)
+            local clipped_z = near_plane
+            local clipped_x = v0.x + (v1.x - v0.x) * t
+            local clipped_y = v0.y + (v1.y - v0.y) * t
+            local clipped_world_x = v0.world_x + (v1.world_x - v0.world_x) * t
+            local clipped_world_z = v0.world_z + (v1.world_z - v0.world_z) * t
+
+            -- Re-project clipped vertex
+            local fov = 200
+            local screen_x = 480 / 2 + (clipped_x / clipped_z) * fov
+            local screen_y = 270 / 2 - (clipped_y / clipped_z) * fov
+            local w = 1 / clipped_z
+
+            add(result, {
+                x = screen_x,
+                y = screen_y,
+                z = clipped_z,
+                w = w,
+                world_x = clipped_world_x,
+                world_z = clipped_world_z,
+                cam_x = clipped_x,
+                cam_y = clipped_y
+            })
+        end
+    end
+
+    return result
+end
 
 --[[
-  Render floor polygons using horizontal scanline spans
-  Only renders floor where geometry exists (like Doom's visplanes)
-  Uses the actual floor faces from the map
-  Uses batched tline3d for performance
+  Render floor for sector polygons using tline3d
+  Uses perspective-correct texture mapping for 3D grid effect
+
+  @param map: map data with faces and vertices
+  @param player: player object with position and rotation
+  @param floor_sprite: sprite index for floor texture
+  @param fog_start: distance where fog starts
+  @param fog_end: distance where fog is maximum
 ]]
-function Raycaster.render_floors(map, player, floor_sprite)
+function Raycaster.render_floors(map, player, floor_sprite, fog_start, fog_end)
     Raycaster.floor_spans_drawn = 0  -- Reset counter
 
-    local screen_width = 480
-    local screen_height = 270
     local fov = 200
     local near_plane = 0.1
-    local floor_height = 0  -- Y coordinate of floor
+    local texture_size = 32
 
-    -- Scanline batch counter
-    local batch_count = 0
-
-    -- Precompute trig values (optimization)
-    local cos_yaw = cos(player.angle)
-    local sin_yaw = sin(player.angle)
-    local cos_pitch = cos(player.pitch)
-    local sin_pitch = sin(player.pitch)
-
-    -- Helper: transform world point to camera space
-    local function to_camera_space(wx, wy, wz)
-        local dx = wx - player.x
-        local dy = wy - player.y
-        local dz = wz - player.z
-
-        -- Rotate by yaw (using precomputed values)
-        local rx = dx * cos_yaw - dz * sin_yaw
-        local rz = dx * sin_yaw + dz * cos_yaw
-
-        -- Rotate by pitch (using precomputed values)
-        local ry = dy * cos_pitch - rz * sin_pitch
-        local final_z = dy * sin_pitch + rz * cos_pitch
-
-        return rx, ry, final_z
-    end
-
-    -- Helper: project camera space to screen space
-    local function project_to_screen(cx, cy, cz)
-        if cz < near_plane then
-            return nil
-        end
-        local screen_x = screen_width / 2 + (cx / cz) * fov
-        local screen_y = screen_height / 2 - (cy / cz) * fov
-        return {x = screen_x, y = screen_y, z = cz}
-    end
-
-    -- Helper: clip polygon against near plane and return clipped vertices
-    local function clip_polygon_near_plane(verts)
-        local clipped = {}
-
-        for i = 1, #verts do
-            local v1 = verts[i]
-            local v2 = verts[(i % #verts) + 1]
-
-            local behind1 = v1.cz < near_plane
-            local behind2 = v2.cz < near_plane
-
-            if not behind1 then
-                -- v1 is in front, add it
-                add(clipped, v1)
-            end
-
-            -- Check if edge crosses near plane
-            if behind1 ~= behind2 then
-                -- Interpolate to find intersection point
-                local t = (near_plane - v1.cz) / (v2.cz - v1.cz)
-
-                -- Interpolate camera-space coords
-                local cx = v1.cx + (v2.cx - v1.cx) * t
-                local cy = v1.cy + (v2.cy - v1.cy) * t
-                local cz = near_plane
-
-                -- Interpolate world coords
-                local wx = v1.wx + (v2.wx - v1.wx) * t
-                local wz = v1.wz + (v2.wz - v1.wz) * t
-
-                -- Interpolate UV coords
-                local u = v1.u + (v2.u - v1.u) * t
-                local v_coord = v1.v + (v2.v - v1.v) * t
-
-                -- Project clipped vertex
-                local p = project_to_screen(cx, cy, cz)
-                if p then
-                    add(clipped, {cx = cx, cy = cy, cz = cz, wx = wx, wz = wz, u = u, v = v_coord, screen = p})
-                end
-            end
-        end
-
-        return clipped
-    end
-
-    -- Render each floor face as horizontal spans
+    -- Process each floor polygon
     for face in all(map.faces) do
-        -- Get all vertices of the floor polygon with world coords
-        local floor_verts = {}
+        -- Transform vertices to camera space
+        local cam_verts = {}
 
-        -- First pass: collect vertices and find bounding box for UV mapping
-        local min_wx, max_wx = 99999, -99999
-        local min_wz, max_wz = 99999, -99999
+        for i=1,#face do
+            local v_idx = face[i]
+            local v = map.vertices[v_idx]
 
-        for i = 1, #face do
-            local v = map.vertices[face[i]]
-            min_wx = min(min_wx, v.x)
-            max_wx = max(max_wx, v.x)
-            min_wz = min(min_wz, v.z)
-            max_wz = max(max_wz, v.z)
-        end
+            -- Transform to camera space
+            local dx = v.x - player.x
+            local dy = 0 - player.y  -- Floor at y=0
+            local dz = v.z - player.z
 
-        -- Calculate quad dimensions for UV mapping
-        local quad_width = max_wx - min_wx
-        local quad_depth = max_wz - min_wz
+            -- Rotate by yaw
+            local cos_yaw = cos(player.angle)
+            local sin_yaw = sin(player.angle)
+            local rx = dx * cos_yaw - dz * sin_yaw
+            local rz = dx * sin_yaw + dz * cos_yaw
 
-        -- Avoid division by zero
-        if quad_width < 0.001 then quad_width = 0.001 end
-        if quad_depth < 0.001 then quad_depth = 0.001 end
+            -- Rotate by pitch
+            local cos_pitch = cos(player.pitch)
+            local sin_pitch = sin(player.pitch)
+            local ry = dy * cos_pitch - rz * sin_pitch
+            local final_z = dy * sin_pitch + rz * cos_pitch
 
-        -- Second pass: transform vertices to camera space with UV coords
-        for i = 1, #face do
-            local v = map.vertices[face[i]]
-            local cx, cy, cz = to_camera_space(v.x, floor_height, v.z)
-
-            -- Calculate NORMALIZED UV coordinates (0-1 range) based on position within quad bounds
-            -- This matches how walls use normalized UVs
-            local u = (v.x - min_wx) / quad_width
-            local v_coord = (v.z - min_wz) / quad_depth
-
-            add(floor_verts, {
-                wx = v.x,
-                wz = v.z,
-                u = u,
-                v = v_coord,
-                cx = cx,
-                cy = cy,
-                cz = cz
+            add(cam_verts, {
+                x = rx,
+                y = ry,
+                z = final_z,
+                world_x = v.x,
+                world_z = v.z
             })
         end
 
-        -- Clip polygon against near plane
-        local clipped_verts = clip_polygon_near_plane(floor_verts)
+        -- Clip against near plane
+        local clipped_verts = clip_polygon_near_plane(cam_verts, near_plane)
 
-        -- Skip if polygon is entirely clipped
         if #clipped_verts < 3 then
-            goto skip_polygon
+            goto continue_floor
         end
 
-        -- Project clipped vertices to screen space
-        local projected = {}
+        -- Project clipped vertices to screen
+        local screen_verts = {}
         for v in all(clipped_verts) do
-            local p = project_to_screen(v.cx, v.cy, v.cz)
-            if p then
-                add(projected, {
-                    cx = v.cx,
-                    cy = v.cy,
-                    cz = v.cz,
-                    wx = v.wx,
-                    wz = v.wz,
-                    u = v.u,
-                    v = v.v,
-                    screen = p
+            -- If not already projected (from clipping)
+            if not v.w then
+                local screen_x = 480 / 2 + (v.x / v.z) * fov
+                local screen_y = 270 / 2 - (v.y / v.z) * fov
+                add(screen_verts, {
+                    x = screen_x,
+                    y = screen_y,
+                    z = v.z,
+                    w = 1 / v.z,
+                    world_x = v.world_x,
+                    world_z = v.world_z
                 })
+            else
+                add(screen_verts, v)
             end
         end
 
-        -- Skip if no vertices projected successfully
-        if #projected < 3 then
-            goto skip_polygon
-        end
+        -- Build edge table for scanline rasterization
+        local spans = {}
 
-        -- Find Y range (min and max screen Y) of this polygon
-        local min_y = 99999
-        local max_y = -99999
-        for p in all(projected) do
-            if p.screen then
-                min_y = min(min_y, p.screen.y)
-                max_y = max(max_y, p.screen.y)
+        -- For each edge of the polygon
+        for i=1,#screen_verts do
+            local v0 = screen_verts[i]
+            local v1 = screen_verts[(i % #screen_verts) + 1]
+
+            local x0, y0 = v0.x, v0.y
+            local x1, y1 = v1.x, v1.y
+            local w0, w1 = v0.w, v1.w
+            local u0, v_coord0 = v0.world_x, v0.world_z
+            local u1, v_coord1 = v1.world_x, v1.world_z
+
+            -- Ensure y0 < y1
+            if y0 > y1 then
+                x0, x1 = x1, x0
+                y0, y1 = y1, y0
+                w0, w1 = w1, w0
+                u0, u1 = u1, u0
+                v_coord0, v_coord1 = v_coord1, v_coord0
             end
+
+            local dy = y1 - y0
+            if dy == 0 then
+                goto continue_edge
+            end
+
+            local cy0 = flr(y0) + 1
+            local dx = (x1 - x0) / dy
+            local dw = (w1 - w0) / dy
+            local du = (u1 - u0) / dy
+            local dv = (v_coord1 - v_coord0) / dy
+
+            -- Starting position adjustment
+            local sy = cy0 - y0
+            if y0 < 0 then
+                sy = 0
+                cy0 = 0
+            end
+
+            x0 = x0 + sy * dx
+            w0 = w0 + sy * dw
+            u0 = u0 + sy * du
+            v_coord0 = v_coord0 + sy * dv
+
+            if y1 > 269 then
+                y1 = 269
+            end
+
+            -- Rasterize edge
+            for y=cy0, flr(y1) do
+                if not spans[y] then
+                    spans[y] = {}
+                end
+
+                add(spans[y], {
+                    x = x0,
+                    w = w0,
+                    u = u0,
+                    v = v_coord0
+                })
+
+                x0 = x0 + dx
+                w0 = w0 + dw
+                u0 = u0 + du
+                v_coord0 = v_coord0 + dv
+            end
+
+            ::continue_edge::
         end
 
-        -- Clamp to screen bounds and bottom half only (floor)
-        -- Only render if polygon is visible in bottom half
-        if max_y >= screen_height / 2 then
-            min_y = max(flr(screen_height / 2) + 1, flr(min_y))
-            max_y = min(screen_height - 1, flr(max_y))
-        else
-            goto skip_polygon
-        end
-
-            -- Render horizontal spans for this polygon
-            for y = min_y, max_y do
-                -- Find X intersections with polygon edges at this Y
-                local intersections = {}
-
-                for i = 1, #projected do
-                    local j = (i % #projected) + 1
-                    local p1 = projected[i]
-                    local p2 = projected[j]
-
-                    -- Both vertices need screen projections
-                    if p1.screen and p2.screen then
-                        local y1 = p1.screen.y
-                        local y2 = p2.screen.y
-
-                        -- Check if edge crosses this scanline
-                        if (y1 <= y and y2 >= y) or (y2 <= y and y1 >= y) then
-                            if abs(y2 - y1) > 0.001 then
-                                -- Interpolate to find X at this Y
-                                local t = (y - y1) / (y2 - y1)
-                                t = mid(0, t, 1)
-
-                                local x = p1.screen.x + (p2.screen.x - p1.screen.x) * t
-
-                                -- Perspective-correct depth interpolation:
-                                -- We must interpolate 1/z (not z) linearly in screen space
-                                local z1 = p1.screen.z
-                                local z2 = p2.screen.z
-                                local inv_z1 = 1 / z1
-                                local inv_z2 = 1 / z2
-
-                                -- Interpolate 1/z linearly in screen space
-                                local inv_z = inv_z1 + (inv_z2 - inv_z1) * t
-                                local z = 1 / inv_z  -- Recover perspective-correct depth
-
-                                -- Perspective-correct UV interpolation:
-                                local u1 = projected[i].u
-                                local v1 = projected[i].v
-                                local u2 = projected[j].u
-                                local v2 = projected[j].v
-
-                                -- Calculate u/z and v/z at endpoints (which equals u * inv_z)
-                                local u_over_z1 = u1 * inv_z1
-                                local v_over_z1 = v1 * inv_z1
-                                local u_over_z2 = u2 * inv_z2
-                                local v_over_z2 = v2 * inv_z2
-
-                                -- Interpolate u/z and v/z linearly in screen space
-                                local u_over_z = u_over_z1 + (u_over_z2 - u_over_z1) * t
-                                local v_over_z = v_over_z1 + (v_over_z2 - v_over_z1) * t
-
-                                -- Store u/z and v/z (not u and v!) for later perspective division
-                                add(intersections, {x = x, z = z, u_over_z = u_over_z, v_over_z = v_over_z})
-                            end
+        -- Fill spans using tline3d
+        for y, span_list in pairs(spans) do
+            if #span_list >= 2 then
+                -- Sort by x coordinate
+                for i=1,#span_list-1 do
+                    for j=i+1,#span_list do
+                        if span_list[j].x < span_list[i].x then
+                            local temp = span_list[i]
+                            span_list[i] = span_list[j]
+                            span_list[j] = temp
                         end
                     end
                 end
 
-                -- Sort intersections by X
-                for i = 1, #intersections - 1 do
-                    for j = i + 1, #intersections do
-                        if intersections[j].x < intersections[i].x then
-                            intersections[i], intersections[j] = intersections[j], intersections[i]
-                        end
-                    end
-                end
+                -- Fill between pairs
+                for i=1,#span_list-1,2 do
+                    local left = span_list[i]
+                    local right = span_list[i+1]
 
-                -- Draw spans between pairs of intersections
-                for i = 1, #intersections - 1, 2 do
-                    if i + 1 <= #intersections then
-                        local x_left = flr(intersections[i].x)
-                        local x_right = flr(intersections[i + 1].x)
+                    local x_start = flr(left.x)
+                    local x_end = flr(right.x)
 
-                        -- Clamp to screen bounds
-                        x_left = max(0, x_left)
-                        x_right = min(screen_width - 1, x_right)
+                    -- Clamp to screen
+                    x_start = max(0, x_start)
+                    x_end = min(479, x_end)
 
-                        if x_right > x_left then
-                            -- Get depth at endpoints
-                            local z_left = intersections[i].z
-                            local z_right = intersections[i + 1].z
+                    if x_end > x_start then
+                        -- Calculate perspective-correct UVs at endpoints
+                        -- Multiply texture coords by w (same as walls)
+                        local u0 = left.u * texture_size * left.w
+                        local v0 = left.v * texture_size * left.w
+                        local u1 = right.u * texture_size * right.w
+                        local v1 = right.v * texture_size * right.w
 
-                            -- Calculate W values (1/z) for perspective correction
-                            local w_left = 1 / z_left
-                            local w_right = 1 / z_right
+                        -- Draw horizontal span with tline3d
+                        tline3d(
+                            floor_sprite,
+                            x_start, y,
+                            x_end, y,
+                            u0, v0,
+                            u1, v1,
+                            left.w, right.w
+                        )
 
-                            -- Get u/z and v/z at endpoints
-                            local u_over_z_left = intersections[i].u_over_z
-                            local v_over_z_left = intersections[i].v_over_z
-                            local u_over_z_right = intersections[i + 1].u_over_z
-                            local v_over_z_right = intersections[i + 1].v_over_z
-
-                            -- For tline3d perspective correction (matching wall renderer):
-                            -- UVs are normalized (0-1), need to multiply by texture_size
-                            -- We have (u_normalized/z), multiply by texture_size to get (u_pixels/z)
-                            -- Then multiply by w to get u_pixels*w for tline3d
-                            -- u_pixels*w = (u_normalized * texture_size) * w
-                            --            = (u_normalized/z) * texture_size * (1/z) * z
-                            --            = (u_normalized/z) * texture_size
-                            local texture_size = 16
-
-                            -- Calculate u*w and v*w for perspective-correct texture mapping
-                            -- This matches the wall renderer pattern
-                            local uw_left = u_over_z_left * texture_size
-                            local vw_left = v_over_z_left * texture_size
-                            local uw_right = u_over_z_right * texture_size
-                            local vw_right = v_over_z_right * texture_size
-
-                            -- Add scanline to batch buffer
-                            -- Format: sprite, x1, y1, x2, y2, u1*w1, v1*w1, u2*w2, v2*w2, w1, w2
-                            local offset = batch_count * 11
-                            floor_scanlines[offset + 0] = floor_sprite
-                            floor_scanlines[offset + 1] = x_left
-                            floor_scanlines[offset + 2] = y
-                            floor_scanlines[offset + 3] = x_right
-                            floor_scanlines[offset + 4] = y
-                            floor_scanlines[offset + 5] = uw_left
-                            floor_scanlines[offset + 6] = vw_left
-                            floor_scanlines[offset + 7] = uw_right
-                            floor_scanlines[offset + 8] = vw_right
-                            floor_scanlines[offset + 9] = w_left
-                            floor_scanlines[offset + 10] = w_right
-
-                            batch_count = batch_count + 1
-                            Raycaster.floor_spans_drawn = Raycaster.floor_spans_drawn + 1
-
-                            -- Flush batch if buffer is full (270 scanlines max)
-                            if batch_count >= 270 then
-                                tline3d(floor_scanlines, 0, batch_count)
-                                batch_count = 0
-                            end
-                        end
+                        Raycaster.floor_spans_drawn = Raycaster.floor_spans_drawn + 1
                     end
                 end
             end
+        end
 
-        ::skip_polygon::  -- Label for early exit
+        ::continue_floor::
     end
+end
 
-    -- Flush remaining scanlines
-    if batch_count > 0 then
-        tline3d(floor_scanlines, 0, batch_count)
+--[[
+  Render ceiling for sector polygons using tline3d
+  Uses perspective-correct texture mapping for 3D grid effect
+
+  @param map: map data with faces and vertices
+  @param player: player object with position and rotation
+  @param ceiling_sprite: sprite index for ceiling texture
+  @param fog_start: distance where fog starts
+  @param fog_end: distance where fog is maximum
+]]
+function Raycaster.render_ceilings(map, player, ceiling_sprite, fog_start, fog_end)
+    Raycaster.ceiling_spans_drawn = 0  -- Reset counter
+
+    local fov = 200
+    local near_plane = 0.1
+    local ceiling_height = 2.5  -- Match WALL_HEIGHT from main
+    local texture_size = 32
+
+    -- Process each ceiling polygon
+    for face in all(map.faces) do
+        -- Transform vertices to camera space
+        local cam_verts = {}
+
+        for i=1,#face do
+            local v_idx = face[i]
+            local v = map.vertices[v_idx]
+
+            -- Transform to camera space
+            local dx = v.x - player.x
+            local dy = ceiling_height - player.y  -- Ceiling at y=ceiling_height
+            local dz = v.z - player.z
+
+            -- Rotate by yaw
+            local cos_yaw = cos(player.angle)
+            local sin_yaw = sin(player.angle)
+            local rx = dx * cos_yaw - dz * sin_yaw
+            local rz = dx * sin_yaw + dz * cos_yaw
+
+            -- Rotate by pitch
+            local cos_pitch = cos(player.pitch)
+            local sin_pitch = sin(player.pitch)
+            local ry = dy * cos_pitch - rz * sin_pitch
+            local final_z = dy * sin_pitch + rz * cos_pitch
+
+            add(cam_verts, {
+                x = rx,
+                y = ry,
+                z = final_z,
+                world_x = v.x,
+                world_z = v.z
+            })
+        end
+
+        -- Clip against near plane
+        local clipped_verts = clip_polygon_near_plane(cam_verts, near_plane)
+
+        if #clipped_verts < 3 then
+            goto continue_ceiling
+        end
+
+        -- Project clipped vertices to screen
+        local screen_verts = {}
+        for v in all(clipped_verts) do
+            -- If not already projected (from clipping)
+            if not v.w then
+                local screen_x = 480 / 2 + (v.x / v.z) * fov
+                local screen_y = 270 / 2 - (v.y / v.z) * fov
+                add(screen_verts, {
+                    x = screen_x,
+                    y = screen_y,
+                    z = v.z,
+                    w = 1 / v.z,
+                    world_x = v.world_x,
+                    world_z = v.world_z
+                })
+            else
+                add(screen_verts, v)
+            end
+        end
+
+        -- Build edge table for scanline rasterization
+        local spans = {}
+
+        -- For each edge of the polygon
+        for i=1,#screen_verts do
+            local v0 = screen_verts[i]
+            local v1 = screen_verts[(i % #screen_verts) + 1]
+
+            local x0, y0 = v0.x, v0.y
+            local x1, y1 = v1.x, v1.y
+            local w0, w1 = v0.w, v1.w
+            local u0, v_coord0 = v0.world_x, v0.world_z
+            local u1, v_coord1 = v1.world_x, v1.world_z
+
+            -- Ensure y0 < y1
+            if y0 > y1 then
+                x0, x1 = x1, x0
+                y0, y1 = y1, y0
+                w0, w1 = w1, w0
+                u0, u1 = u1, u0
+                v_coord0, v_coord1 = v_coord1, v_coord0
+            end
+
+            local dy = y1 - y0
+            if dy == 0 then
+                goto continue_ceiling_edge
+            end
+
+            local cy0 = flr(y0) + 1
+            local dx = (x1 - x0) / dy
+            local dw = (w1 - w0) / dy
+            local du = (u1 - u0) / dy
+            local dv = (v_coord1 - v_coord0) / dy
+
+            -- Starting position adjustment
+            local sy = cy0 - y0
+            if y0 < 0 then
+                sy = 0
+                cy0 = 0
+            end
+
+            x0 = x0 + sy * dx
+            w0 = w0 + sy * dw
+            u0 = u0 + sy * du
+            v_coord0 = v_coord0 + sy * dv
+
+            if y1 > 269 then
+                y1 = 269
+            end
+
+            -- Rasterize edge
+            for y=cy0, flr(y1) do
+                if not spans[y] then
+                    spans[y] = {}
+                end
+
+                add(spans[y], {
+                    x = x0,
+                    w = w0,
+                    u = u0,
+                    v = v_coord0
+                })
+
+                x0 = x0 + dx
+                w0 = w0 + dw
+                u0 = u0 + du
+                v_coord0 = v_coord0 + dv
+            end
+
+            ::continue_ceiling_edge::
+        end
+
+        -- Fill spans using tline3d
+        for y, span_list in pairs(spans) do
+            if #span_list >= 2 then
+                -- Sort by x coordinate
+                for i=1,#span_list-1 do
+                    for j=i+1,#span_list do
+                        if span_list[j].x < span_list[i].x then
+                            local temp = span_list[i]
+                            span_list[i] = span_list[j]
+                            span_list[j] = temp
+                        end
+                    end
+                end
+
+                -- Fill between pairs
+                for i=1,#span_list-1,2 do
+                    local left = span_list[i]
+                    local right = span_list[i+1]
+
+                    local x_start = flr(left.x)
+                    local x_end = flr(right.x)
+
+                    -- Clamp to screen
+                    x_start = max(0, x_start)
+                    x_end = min(479, x_end)
+
+                    if x_end > x_start then
+                        -- Calculate perspective-correct UVs at endpoints
+                        -- Multiply texture coords by w (same as walls)
+                        local u0 = left.u * texture_size * left.w
+                        local v0 = left.v * texture_size * left.w
+                        local u1 = right.u * texture_size * right.w
+                        local v1 = right.v * texture_size * right.w
+
+                        -- Draw horizontal span with tline3d
+                        tline3d(
+                            ceiling_sprite,
+                            x_start, y,
+                            x_end, y,
+                            u0, v0,
+                            u1, v1,
+                            left.w, right.w
+                        )
+
+                        Raycaster.ceiling_spans_drawn = Raycaster.ceiling_spans_drawn + 1
+                    end
+                end
+            end
+        end
+
+        ::continue_ceiling::
     end
 end
 
