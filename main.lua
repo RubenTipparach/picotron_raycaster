@@ -184,9 +184,9 @@ end
   An edge is outer if it appears in only one face (boundary edge)
 ]]
 function extract_outer_walls()
-    local edge_count = {}  -- edge -> count
+    local edge_to_face = {}  -- edge -> {face, v1, v2} (with original order)
 
-    -- Count edge occurrences
+    -- Track edge occurrences with their face context
     for face in all(map.faces) do
         for i=1,#face do
             local v1 = face[i]
@@ -195,22 +195,46 @@ function extract_outer_walls()
             -- Create edge key (smaller index first for consistency)
             local edge_key = min(v1, v2) .. "," .. max(v1, v2)
 
-            edge_count[edge_key] = (edge_count[edge_key] or 0) + 1
+            if not edge_to_face[edge_key] then
+                edge_to_face[edge_key] = {}
+            end
+            -- Store face reference and original vertex order
+            add(edge_to_face[edge_key], {face = face, v1 = v1, v2 = v2})
         end
     end
 
     -- Extract edges that appear only once (outer boundary)
+    -- Use face winding order to determine normal direction
     map.walls = {}
-    for edge_key, count in pairs(edge_count) do
-        if count == 1 then
-            local parts = split(edge_key, ",")
-            local v1 = tonum(parts[1])
-            local v2 = tonum(parts[2])
+    for edge_key, edge_list in pairs(edge_to_face) do
+        if #edge_list == 1 then
+            local edge_info = edge_list[1]
+            local face = edge_info.face
+            local v1_idx = edge_info.v1
+            local v2_idx = edge_info.v2
+
+            -- Get vertex positions
+            local v1 = map.vertices[v1_idx]
+            local v2 = map.vertices[v2_idx]
+
+            -- Calculate wall normal based on face winding order
+            -- The face vertices wind counter-clockwise when viewed from above (floor)
+            -- So the wall (extruded upward) should face to the RIGHT of the v1→v2 direction
+            -- Right = 90° clockwise rotation: (dx, dz) → (dz, -dx)
+
+            local edge_dx = v2.x - v1.x
+            local edge_dz = v2.z - v1.z
+
+            -- Normal points to the right of the edge (inward, toward the room)
+            local normal_x = edge_dz
+            local normal_z = -edge_dx
 
             add(map.walls, {
-                v1 = v1,
-                v2 = v2,
-                height = WALL_HEIGHT
+                v1 = v1_idx,
+                v2 = v2_idx,
+                height = WALL_HEIGHT,
+                normal_x = normal_x,
+                normal_z = normal_z
             })
         end
     end

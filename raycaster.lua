@@ -127,6 +127,23 @@ function Raycaster.render_walls(map, player, wall_sprite)
         local v1 = map.vertices[wall.v1]
         local v2 = map.vertices[wall.v2]
 
+        -- Backface culling: use precomputed wall normal
+        -- Wall normal was calculated during map load to point inward (toward room center)
+
+        -- Vector from wall midpoint to camera
+        local wall_mid_x = (v1.x + v2.x) * 0.5
+        local wall_mid_z = (v1.z + v2.z) * 0.5
+        local to_camera_x = player.x - wall_mid_x
+        local to_camera_z = player.z - wall_mid_z
+
+        -- Dot product: positive = camera on front side, negative = camera on back side
+        local dot = wall.normal_x * to_camera_x + wall.normal_z * to_camera_z
+
+        -- Skip if camera is behind wall (dot <= 0 means backface)
+        if dot <= 0 then
+            goto continue
+        end
+
         -- Clip wall quad against frustum
         local clipped_quads = clip_wall_quad(player, v1, v2, wall.height, fov, near_plane)
 
@@ -238,6 +255,8 @@ function Raycaster.render_walls(map, player, wall_sprite)
                 end  -- end depth test
             end  -- end x loop
         end  -- end quad loop
+
+        ::continue::  -- Label for backface culling skip
     end  -- end wall loop
 end
 
