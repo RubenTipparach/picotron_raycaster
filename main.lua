@@ -477,11 +477,11 @@ end
 function _draw()
     cls(1)  -- clear to dark blue
 
+    -- Render floors/ceilings using horizontal spans (draw first, behind walls)
+    Raycaster.render_floors(map, player, floor_sprite)
+
     -- Render walls using raycaster module (now handles its own clipping)
     Raycaster.render_walls(map, player, wall_sprite)
-
-    -- Render floors/ceilings using horizontal spans
-    Raycaster.render_floors()
 
     -- Draw debug wireframe (toggleable with T key)
     if show_wireframe then
@@ -768,24 +768,26 @@ function draw_hud()
     -- Performance metrics
     print("columns: " .. Raycaster.columns_drawn, 2, 50, 0)
     print("columns: " .. Raycaster.columns_drawn, 2, 50)
+    print("floor spans: " .. Raycaster.floor_spans_drawn, 2, 58, 0)
+    print("floor spans: " .. Raycaster.floor_spans_drawn, 2, 58)
 
     -- CPU usage (1.0 = 60fps, 2.0 = 30fps)
     local cpu_str = "cpu: " .. flr(frame_cpu * 100) / 100
-    print(cpu_str, 2, 58, 0)
-    print(cpu_str, 2, 58)
+    print(cpu_str, 2, 66, 0)
+    print(cpu_str, 2, 66)
 
     -- Calculate FPS from CPU (fps = 60 / cpu_usage)
     local fps = 60
     if frame_cpu > 0 then
         fps = flr(60 / frame_cpu)
     end
-    print("fps: " .. fps, 2, 66, 0)
-    print("fps: " .. fps, 2, 66)
+    print("fps: " .. fps, 2, 74, 0)
+    print("fps: " .. fps, 2, 74)
 
     -- Wireframe toggle state
     local wire_state = show_wireframe and "on" or "off"
-    print("wireframe(t): " .. wire_state, 2, 74, 0)
-    print("wireframe(t): " .. wire_state, 2, 74)
+    print("wireframe(t): " .. wire_state, 2, 82, 0)
+    print("wireframe(t): " .. wire_state, 2, 82)
 
     -- Instructions
     -- if not mouse_locked then
