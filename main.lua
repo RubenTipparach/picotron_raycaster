@@ -45,17 +45,20 @@
   - Yellow wireframes: Walls (outer boundaries)
 ]]
 
+-- Load configuration first
+local Config = include("config.lua")
+
 -- Game state
 local player = {
     x = 0,
-    y = 1.7,  -- eye height
+    y = Config.PLAYER_EYE_HEIGHT,  -- eye height
     z = 0,
     angle = 0,  -- yaw (horizontal rotation)
     pitch = 0,  -- look up/down
     vx = 0,
     vy = 0,
     vz = 0,
-    radius = 0.3  -- collision radius
+    radius = Config.PLAYER_COLLISION_RADIUS  -- collision radius
 }
 
 -- Map data
@@ -74,34 +77,31 @@ local last_mouse_y = 0
 -- Debug options
 local show_wireframe = false
 
--- Constants
-local MOVE_SPEED = 3
-local JUMP_SPEED = 5
-local GRAVITY = 9.8
-local FRICTION = 0.85
-local WALL_HEIGHT = 2.5
-
--- Fog settings (depth-based dithering)
-local FOG_START = 10  -- Distance where fog starts
-local FOG_END = 20    -- Distance where fog is maximum
-
--- Camera settings
-local FOV = 200                  -- Field of view (higher = wider angle, lower = narrower/zoomed)
-local TURN_SPEED = 0.02           -- Mouse horizontal sensitivity
-local PITCH_SPEED = 0.02          -- Mouse vertical sensitivity
-local MAX_PITCH = 0.125          -- Max look up/down: 45 degrees (45/360 = 0.125)
-
--- Arrow key rotation settings (when mouse not locked)
-local ARROW_TURN_SPEED = 0.015  -- ~0.54 degrees per frame
-local ARROW_PITCH_SPEED = 0.01  -- ~0.36 degrees per frame
-
 -- Performance tracking
 local frame_cpu = 0
 
+-- Use config constants for all settings
+local MOVE_SPEED = Config.MOVE_SPEED
+local JUMP_SPEED = Config.JUMP_SPEED
+local GRAVITY = Config.GRAVITY
+local FRICTION = Config.FRICTION
+local WALL_HEIGHT = Config.WALL_HEIGHT
+
+local FOG_START = Config.FOG_START
+local FOG_END = Config.FOG_END
+
+local FOV = Config.FOV
+local TURN_SPEED = Config.TURN_SPEED
+local PITCH_SPEED = Config.PITCH_SPEED
+local MAX_PITCH = Config.MAX_PITCH
+
+local ARROW_TURN_SPEED = Config.ARROW_TURN_SPEED
+local ARROW_PITCH_SPEED = Config.ARROW_PITCH_SPEED
+
 -- Sprites for textures
-local wall_sprite = 0
-local floor_sprite = 2  -- Swapped with ceiling
-local ceiling_sprite = 1  -- Swapped with floor
+local wall_sprite = Config.SPRITE_WALL
+local floor_sprite = Config.SPRITE_FLOOR
+local ceiling_sprite = Config.SPRITE_CEILING
 
 -- Load raycaster module (include returns the module)
 local Raycaster = include("raycaster.lua")

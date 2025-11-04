@@ -8,6 +8,7 @@
   vertical textured columns with proper perspective correction.
 ]]
 
+local Config = include("config.lua")
 local Raycaster = {}
 
 -- Performance tracking
@@ -54,8 +55,8 @@ local function clip_wall_quad(player, v1, v2, wall_height, fov, near_plane)
         if cz < near_plane then
             return nil
         end
-        local screen_x = 480 / 2 + (cx / cz) * fov
-        local screen_y = 270 / 2 - (cy / cz) * fov
+        local screen_x = Config.SCREEN_CENTER_X + (cx / cz) * fov
+        local screen_y = Config.SCREEN_CENTER_Y - (cy / cz) * fov
         return {x = screen_x, y = screen_y, z = cz}
     end
 
@@ -111,9 +112,9 @@ local function clip_wall_quad(player, v1, v2, wall_height, fov, near_plane)
     }}
 end
 
--- Wall columns buffer for batched rendering (480 columns max)
+-- Wall columns buffer for batched rendering
 -- Format: sprite, x1, y1, x2, y2, u1*w1, v1*w1, u2*w2, v2*w2, w1, w2
-local wall_columns = userdata("f64", 11, 480)
+local wall_columns = userdata("f64", 11, Config.MAX_WALL_COLUMNS)
 local wall_column_count = 0
 
 --[[
@@ -128,8 +129,8 @@ function Raycaster.render_walls(map, player, wall_sprite, fog_start, fog_end)
     Raycaster.columns_drawn = 0  -- Reset counter
     wall_column_count = 0  -- Reset batch counter
 
-    local fov = 200  -- Match FOV from main
-    local near_plane = 0.1
+    local fov = Config.FOV
+    local near_plane = Config.NEAR_PLANE
 
     -- Fog parameters (default values if not provided)
     fog_start = fog_start or 10
@@ -178,7 +179,7 @@ function Raycaster.render_walls(map, player, wall_sprite, fog_start, fog_end)
             -- Each wall segment is exactly 1 texture unit (16x16 pixels)
             -- U goes from 0 to 16 across the width of the segment
             -- V goes from 0 to 16 across the height of the segment
-            local texture_size = 32
+            local texture_size = Config.TEXTURE_SIZE
 
             -- Find screen X range (left to right)
             -- Use floor for start and ceil for end to ensure we cover all pixels
@@ -260,7 +261,7 @@ function Raycaster.render_walls(map, player, wall_sprite, fog_start, fog_end)
 
                     -- Add vertical column to batch buffer
                     -- Both U and V need to be multiplied by w for perspective correction
-                    if y_bottom > y_top and y_top < 270 and y_bottom > 0 then
+                    if y_bottom > y_top and y_top < Config.SCREEN_HEIGHT and y_bottom > 0 then
                         Raycaster.columns_drawn = Raycaster.columns_drawn + 1
 
                         -- Add to batch buffer
@@ -280,7 +281,7 @@ function Raycaster.render_walls(map, player, wall_sprite, fog_start, fog_end)
                         wall_column_count = wall_column_count + 1
 
                         -- Flush batch if buffer is full
-                        if wall_column_count >= 480 then
+                        if wall_column_count >= Config.MAX_WALL_COLUMNS then
                             tline3d(wall_columns, 0, wall_column_count)
                             wall_column_count = 0
                         end
@@ -331,9 +332,9 @@ local function clip_polygon_near_plane(verts, near_plane)
             local clipped_world_z = v0.world_z + (v1.world_z - v0.world_z) * t
 
             -- Re-project clipped vertex
-            local fov = 200
-            local screen_x = 480 / 2 + (clipped_x / clipped_z) * fov
-            local screen_y = 270 / 2 - (clipped_y / clipped_z) * fov
+            local fov = Config.FOV
+            local screen_x = Config.SCREEN_CENTER_X + (clipped_x / clipped_z) * fov
+            local screen_y = Config.SCREEN_CENTER_Y - (clipped_y / clipped_z) * fov
             local w = 1 / clipped_z
 
             add(result, {
@@ -365,9 +366,9 @@ end
 function Raycaster.render_floors(map, player, floor_sprite, fog_start, fog_end)
     Raycaster.floor_spans_drawn = 0  -- Reset counter
 
-    local fov = 200
-    local near_plane = 0.1
-    local texture_size = 32
+    local fov = Config.FOV
+    local near_plane = Config.NEAR_PLANE
+    local texture_size = Config.TEXTURE_SIZE
 
     -- Process each floor polygon
     for face in all(map.faces) do
@@ -380,7 +381,7 @@ function Raycaster.render_floors(map, player, floor_sprite, fog_start, fog_end)
 
             -- Transform to camera space
             local dx = v.x - player.x
-            local dy = 0 - player.y  -- Floor at y=0
+            local dy = Config.FLOOR_HEIGHT - player.y  -- Floor at configured height
             local dz = v.z - player.z
 
             -- Rotate by yaw
@@ -416,8 +417,8 @@ function Raycaster.render_floors(map, player, floor_sprite, fog_start, fog_end)
         for v in all(clipped_verts) do
             -- If not already projected (from clipping)
             if not v.w then
-                local screen_x = 480 / 2 + (v.x / v.z) * fov
-                local screen_y = 270 / 2 - (v.y / v.z) * fov
+                local screen_x = Config.SCREEN_CENTER_X + (v.x / v.z) * fov
+                local screen_y = Config.SCREEN_CENTER_Y - (v.y / v.z) * fov
                 add(screen_verts, {
                     x = screen_x,
                     y = screen_y,
@@ -434,6 +435,9 @@ function Raycaster.render_floors(map, player, floor_sprite, fog_start, fog_end)
         -- Build edge table for scanline rasterization
         local spans = {}
 
+        -- UV scale factor - larger value = smaller tiles
+        local uv_scale = Config.UV_SCALE
+
         -- For each edge of the polygon
         for i=1,#screen_verts do
             local v0 = screen_verts[i]
@@ -442,16 +446,20 @@ function Raycaster.render_floors(map, player, floor_sprite, fog_start, fog_end)
             local x0, y0 = v0.x, v0.y
             local x1, y1 = v1.x, v1.y
             local w0, w1 = v0.w, v1.w
-            local u0, v_coord0 = v0.world_x, v0.world_z
-            local u1, v_coord1 = v1.world_x, v1.world_z
+
+            -- Scale down UVs for bigger tiles, then multiply by w for clipspace interpolation
+            local u0_w = v0.world_x * uv_scale * w0
+            local v0_w = v0.world_z * uv_scale * w0
+            local u1_w = v1.world_x * uv_scale * w1
+            local v1_w = v1.world_z * uv_scale * w1
 
             -- Ensure y0 < y1
             if y0 > y1 then
                 x0, x1 = x1, x0
                 y0, y1 = y1, y0
                 w0, w1 = w1, w0
-                u0, u1 = u1, u0
-                v_coord0, v_coord1 = v_coord1, v_coord0
+                u0_w, u1_w = u1_w, u0_w
+                v0_w, v1_w = v1_w, v0_w
             end
 
             local dy = y1 - y0
@@ -462,8 +470,8 @@ function Raycaster.render_floors(map, player, floor_sprite, fog_start, fog_end)
             local cy0 = flr(y0) + 1
             local dx = (x1 - x0) / dy
             local dw = (w1 - w0) / dy
-            local du = (u1 - u0) / dy
-            local dv = (v_coord1 - v_coord0) / dy
+            local du_w = (u1_w - u0_w) / dy
+            local dv_w = (v1_w - v0_w) / dy
 
             -- Starting position adjustment
             local sy = cy0 - y0
@@ -474,8 +482,8 @@ function Raycaster.render_floors(map, player, floor_sprite, fog_start, fog_end)
 
             x0 = x0 + sy * dx
             w0 = w0 + sy * dw
-            u0 = u0 + sy * du
-            v_coord0 = v_coord0 + sy * dv
+            u0_w = u0_w + sy * du_w
+            v0_w = v0_w + sy * dv_w
 
             if y1 > 269 then
                 y1 = 269
@@ -490,14 +498,14 @@ function Raycaster.render_floors(map, player, floor_sprite, fog_start, fog_end)
                 add(spans[y], {
                     x = x0,
                     w = w0,
-                    u = u0,
-                    v = v_coord0
+                    u_w = u0_w,
+                    v_w = v0_w
                 })
 
                 x0 = x0 + dx
                 w0 = w0 + dw
-                u0 = u0 + du
-                v_coord0 = v_coord0 + dv
+                u0_w = u0_w + du_w
+                v0_w = v0_w + dv_w
             end
 
             ::continue_edge::
@@ -530,12 +538,12 @@ function Raycaster.render_floors(map, player, floor_sprite, fog_start, fog_end)
                     x_end = min(479, x_end)
 
                     if x_end > x_start then
-                        -- Calculate perspective-correct UVs at endpoints
-                        -- Multiply texture coords by w (same as walls)
-                        local u0 = left.u * texture_size * left.w
-                        local v0 = left.v * texture_size * left.w
-                        local u1 = right.u * texture_size * right.w
-                        local v1 = right.v * texture_size * right.w
+                        -- UVs are already in clipspace (u*w, v*w)
+                        -- Just multiply by texture_size for final coordinates
+                        local u0 = left.u_w * texture_size
+                        local v0 = left.v_w * texture_size
+                        local u1 = right.u_w * texture_size
+                        local v1 = right.v_w * texture_size
 
                         -- Draw horizontal span with tline3d
                         tline3d(
@@ -570,23 +578,23 @@ end
 function Raycaster.render_ceilings(map, player, ceiling_sprite, fog_start, fog_end)
     Raycaster.ceiling_spans_drawn = 0  -- Reset counter
 
-    local fov = 200
-    local near_plane = 0.1
-    local ceiling_height = 2.5  -- Match WALL_HEIGHT from main
-    local texture_size = 32
+    local fov = Config.FOV
+    local near_plane = Config.NEAR_PLANE
+    local ceiling_height = Config.CEILING_HEIGHT
+    local texture_size = Config.TEXTURE_SIZE
 
     -- Process each ceiling polygon
     for face in all(map.faces) do
-        -- Transform vertices to camera space
+        -- Transform vertices to camera space (same as floor)
         local cam_verts = {}
 
         for i=1,#face do
             local v_idx = face[i]
             local v = map.vertices[v_idx]
 
-            -- Transform to camera space
+            -- Transform to camera space (same as floor but at ceiling height)
             local dx = v.x - player.x
-            local dy = ceiling_height - player.y  -- Ceiling at y=ceiling_height
+            local dy = ceiling_height - player.y  -- Ceiling at fixed y=ceiling_height
             local dz = v.z - player.z
 
             -- Rotate by yaw
@@ -617,14 +625,14 @@ function Raycaster.render_ceilings(map, player, ceiling_sprite, fog_start, fog_e
             goto continue_ceiling
         end
 
-        -- Project clipped vertices to screen
-        local screen_verts = {}
+        -- Project clipped vertices to screen (forward order first)
+        local screen_verts_temp = {}
         for v in all(clipped_verts) do
             -- If not already projected (from clipping)
             if not v.w then
-                local screen_x = 480 / 2 + (v.x / v.z) * fov
-                local screen_y = 270 / 2 - (v.y / v.z) * fov
-                add(screen_verts, {
+                local screen_x = Config.SCREEN_CENTER_X + (v.x / v.z) * fov
+                local screen_y = Config.SCREEN_CENTER_Y - (v.y / v.z) * fov
+                add(screen_verts_temp, {
                     x = screen_x,
                     y = screen_y,
                     z = v.z,
@@ -633,12 +641,21 @@ function Raycaster.render_ceilings(map, player, ceiling_sprite, fog_start, fog_e
                     world_z = v.world_z
                 })
             else
-                add(screen_verts, v)
+                add(screen_verts_temp, v)
             end
+        end
+
+        -- Now reverse the order for ceiling winding
+        local screen_verts = {}
+        for i=#screen_verts_temp,1,-1 do
+            add(screen_verts, screen_verts_temp[i])
         end
 
         -- Build edge table for scanline rasterization
         local spans = {}
+
+        -- UV scale factor - larger value = smaller tiles
+        local uv_scale = Config.UV_SCALE
 
         -- For each edge of the polygon
         for i=1,#screen_verts do
@@ -648,16 +665,20 @@ function Raycaster.render_ceilings(map, player, ceiling_sprite, fog_start, fog_e
             local x0, y0 = v0.x, v0.y
             local x1, y1 = v1.x, v1.y
             local w0, w1 = v0.w, v1.w
-            local u0, v_coord0 = v0.world_x, v0.world_z
-            local u1, v_coord1 = v1.world_x, v1.world_z
+
+            -- Scale down UVs for bigger tiles, then multiply by w for clipspace interpolation
+            local u0_w = v0.world_x * uv_scale * w0
+            local v0_w = v0.world_z * uv_scale * w0
+            local u1_w = v1.world_x * uv_scale * w1
+            local v1_w = v1.world_z * uv_scale * w1
 
             -- Ensure y0 < y1
             if y0 > y1 then
                 x0, x1 = x1, x0
                 y0, y1 = y1, y0
                 w0, w1 = w1, w0
-                u0, u1 = u1, u0
-                v_coord0, v_coord1 = v_coord1, v_coord0
+                u0_w, u1_w = u1_w, u0_w
+                v0_w, v1_w = v1_w, v0_w
             end
 
             local dy = y1 - y0
@@ -668,8 +689,8 @@ function Raycaster.render_ceilings(map, player, ceiling_sprite, fog_start, fog_e
             local cy0 = flr(y0) + 1
             local dx = (x1 - x0) / dy
             local dw = (w1 - w0) / dy
-            local du = (u1 - u0) / dy
-            local dv = (v_coord1 - v_coord0) / dy
+            local du_w = (u1_w - u0_w) / dy
+            local dv_w = (v1_w - v0_w) / dy
 
             -- Starting position adjustment
             local sy = cy0 - y0
@@ -680,8 +701,8 @@ function Raycaster.render_ceilings(map, player, ceiling_sprite, fog_start, fog_e
 
             x0 = x0 + sy * dx
             w0 = w0 + sy * dw
-            u0 = u0 + sy * du
-            v_coord0 = v_coord0 + sy * dv
+            u0_w = u0_w + sy * du_w
+            v0_w = v0_w + sy * dv_w
 
             if y1 > 269 then
                 y1 = 269
@@ -696,14 +717,14 @@ function Raycaster.render_ceilings(map, player, ceiling_sprite, fog_start, fog_e
                 add(spans[y], {
                     x = x0,
                     w = w0,
-                    u = u0,
-                    v = v_coord0
+                    u_w = u0_w,
+                    v_w = v0_w
                 })
 
                 x0 = x0 + dx
                 w0 = w0 + dw
-                u0 = u0 + du
-                v_coord0 = v_coord0 + dv
+                u0_w = u0_w + du_w
+                v0_w = v0_w + dv_w
             end
 
             ::continue_ceiling_edge::
@@ -736,12 +757,12 @@ function Raycaster.render_ceilings(map, player, ceiling_sprite, fog_start, fog_e
                     x_end = min(479, x_end)
 
                     if x_end > x_start then
-                        -- Calculate perspective-correct UVs at endpoints
-                        -- Multiply texture coords by w (same as walls)
-                        local u0 = left.u * texture_size * left.w
-                        local v0 = left.v * texture_size * left.w
-                        local u1 = right.u * texture_size * right.w
-                        local v1 = right.v * texture_size * right.w
+                        -- UVs are already in clipspace (u*w, v*w)
+                        -- Just multiply by texture_size for final coordinates
+                        local u0 = left.u_w * texture_size
+                        local v0 = left.v_w * texture_size
+                        local u1 = right.u_w * texture_size
+                        local v1 = right.v_w * texture_size
 
                         -- Draw horizontal span with tline3d
                         tline3d(
