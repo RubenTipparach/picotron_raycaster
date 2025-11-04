@@ -300,6 +300,81 @@ function Raycaster.render_walls(map, player, wall_sprite, fog_start, fog_end)
 end
 
 --[[
+  Raycast floors using Mode 7 style approach
+  For each scanline, calculate depth and draw with linear UV interpolation
+  This is how SNES Mode 7 and classic Doom did floors/ceilings
+  @param player: player object with position and rotation
+  @param sprite: sprite index to use
+  @param plane_height: y-coordinate of the plane (0 for floor, WALL_HEIGHT for ceiling)
+  @param uv_scale: UV scale factor
+  @param texture_size: texture size in pixels
+  @param y_start: starting screen y coordinate
+  @param y_end: ending screen y coordinate
+]]
+local function raycast_plane(player, sprite, plane_height, uv_scale, texture_size, y_start, y_end)
+    local fov = Config.FOV
+    local screen_center_x = Config.SCREEN_CENTER_X
+    local screen_center_y = Config.SCREEN_CENTER_Y
+
+    local cos_yaw = cos(player.angle)
+    local sin_yaw = sin(player.angle)
+    local cos_pitch = cos(player.pitch)
+    local sin_pitch = sin(player.pitch)
+
+    -- Camera direction vector (forward) - MUST match player movement in main.lua
+    -- forward_x = sin(player.angle), forward_z = cos(player.angle)
+    local cam_dir_x = sin_yaw
+    local cam_dir_z = cos_yaw
+
+    -- Camera plane vector (perpendicular to direction, defines FOV)
+    -- Picotron uses 0-1 rotation (not radians!)
+    -- Rotating direction by +0.25 (90° right): (sin(a), cos(a)) -> (sin(a+0.25), cos(a+0.25)) = (cos(a), -sin(a))
+    -- Rotating direction by -0.25 (90° left):  (sin(a), cos(a)) -> (sin(a-0.25), cos(a-0.25)) = (-cos(a), sin(a))
+    -- We want the plane to point to the right (like strafe right), so use +90°
+    local plane_x = cos_yaw * 0.66* 2
+    local plane_z = -sin_yaw * 0.66
+
+    -- For each screen row from y_start to y_end
+    for screen_y = y_start, y_end do
+        -- Current y position relative to center
+        local p = screen_y - screen_center_y
+
+        -- Vertical position of camera (eye height - plane height)
+        local pos_z = player.y - plane_height
+
+        -- Horizontal distance from camera to point on ground
+        -- This accounts for pitch
+        local row_distance = (pos_z * fov) / (p * cos_pitch - fov * sin_pitch)
+
+        -- Skip if behind camera
+        if row_distance > 0.01 and row_distance < 100 then
+            -- Calculate the step vector for moving along the scanline
+            local floor_step_x = row_distance * (plane_x * 2) / 480
+            local floor_step_z = row_distance * (plane_z * 2) / 480
+
+            -- Starting position (left edge of screen)
+            local floor_x = player.x + row_distance * cam_dir_x - row_distance * plane_x
+            local floor_z = player.z + row_distance * cam_dir_z - row_distance * plane_z
+
+            -- Calculate UVs at left edge
+            local u_left = floor_x * uv_scale * texture_size
+            local v_left = floor_z * uv_scale * texture_size
+
+            -- Calculate UVs at right edge (480 pixels across)
+            local floor_x_right = floor_x + floor_step_x * 480
+            local floor_z_right = floor_z + floor_step_z * 480
+            local u_right = floor_x_right * uv_scale * texture_size
+            local v_right = floor_z_right * uv_scale * texture_size
+
+            -- Draw scanline with linear interpolation (no w needed - constant depth per scanline)
+            tline3d(sprite, 0, screen_y, 479, screen_y,
+                u_left, v_left,
+                u_right, v_right)
+        end
+    end
+end
+
+--[[
   Clip a polygon against the near plane
   Returns array of clipped vertices, or empty if fully clipped
 ]]
@@ -328,8 +403,8 @@ local function clip_polygon_near_plane(verts, near_plane)
             local clipped_z = near_plane
             local clipped_x = v0.x + (v1.x - v0.x) * t
             local clipped_y = v0.y + (v1.y - v0.y) * t
-            local clipped_world_x = v0.world_x + (v1.world_x - v0.world_x) * t
-            local clipped_world_z = v0.world_z + (v1.world_z - v0.world_z) * t
+            local clipped_cam_x = v0.cam_x + (v1.cam_x - v0.cam_x) * t
+            local clipped_cam_z = v0.cam_z + (v1.cam_z - v0.cam_z) * t
 
             -- Re-project clipped vertex
             local fov = Config.FOV
@@ -342,10 +417,8 @@ local function clip_polygon_near_plane(verts, near_plane)
                 y = screen_y,
                 z = clipped_z,
                 w = w,
-                world_x = clipped_world_x,
-                world_z = clipped_world_z,
-                cam_x = clipped_x,
-                cam_y = clipped_y
+                cam_x = clipped_cam_x,
+                cam_z = clipped_cam_z
             })
         end
     end
@@ -366,203 +439,14 @@ end
 function Raycaster.render_floors(map, player, floor_sprite, fog_start, fog_end)
     Raycaster.floor_spans_drawn = 0  -- Reset counter
 
-    local fov = Config.FOV
-    local near_plane = Config.NEAR_PLANE
     local texture_size = Config.TEXTURE_SIZE
+    local uv_scale = Config.UV_SCALE
 
-    -- Process each floor polygon
-    for face in all(map.faces) do
-        -- Transform vertices to camera space
-        local cam_verts = {}
+    -- Raycast floor from center of screen to bottom
+    raycast_plane(player, floor_sprite, Config.FLOOR_HEIGHT, uv_scale, texture_size,
+        Config.SCREEN_CENTER_Y, Config.SCREEN_HEIGHT - 1)
 
-        for i=1,#face do
-            local v_idx = face[i]
-            local v = map.vertices[v_idx]
-
-            -- Transform to camera space
-            local dx = v.x - player.x
-            local dy = Config.FLOOR_HEIGHT - player.y  -- Floor at configured height
-            local dz = v.z - player.z
-
-            -- Rotate by yaw
-            local cos_yaw = cos(player.angle)
-            local sin_yaw = sin(player.angle)
-            local rx = dx * cos_yaw - dz * sin_yaw
-            local rz = dx * sin_yaw + dz * cos_yaw
-
-            -- Rotate by pitch
-            local cos_pitch = cos(player.pitch)
-            local sin_pitch = sin(player.pitch)
-            local ry = dy * cos_pitch - rz * sin_pitch
-            local final_z = dy * sin_pitch + rz * cos_pitch
-
-            add(cam_verts, {
-                x = rx,
-                y = ry,
-                z = final_z,
-                world_x = v.x,
-                world_z = v.z
-            })
-        end
-
-        -- Clip against near plane
-        local clipped_verts = clip_polygon_near_plane(cam_verts, near_plane)
-
-        if #clipped_verts < 3 then
-            goto continue_floor
-        end
-
-        -- Project clipped vertices to screen
-        local screen_verts = {}
-        for v in all(clipped_verts) do
-            -- If not already projected (from clipping)
-            if not v.w then
-                local screen_x = Config.SCREEN_CENTER_X + (v.x / v.z) * fov
-                local screen_y = Config.SCREEN_CENTER_Y - (v.y / v.z) * fov
-                add(screen_verts, {
-                    x = screen_x,
-                    y = screen_y,
-                    z = v.z,
-                    w = 1 / v.z,
-                    world_x = v.world_x,
-                    world_z = v.world_z
-                })
-            else
-                add(screen_verts, v)
-            end
-        end
-
-        -- Build edge table for scanline rasterization
-        local spans = {}
-
-        -- UV scale factor - larger value = smaller tiles
-        local uv_scale = Config.UV_SCALE
-
-        -- For each edge of the polygon
-        for i=1,#screen_verts do
-            local v0 = screen_verts[i]
-            local v1 = screen_verts[(i % #screen_verts) + 1]
-
-            local x0, y0 = v0.x, v0.y
-            local x1, y1 = v1.x, v1.y
-            local w0, w1 = v0.w, v1.w
-
-            -- Scale down UVs for bigger tiles, then multiply by w for clipspace interpolation
-            local u0_w = v0.world_x * uv_scale * w0
-            local v0_w = v0.world_z * uv_scale * w0
-            local u1_w = v1.world_x * uv_scale * w1
-            local v1_w = v1.world_z * uv_scale * w1
-
-            -- Ensure y0 < y1
-            if y0 > y1 then
-                x0, x1 = x1, x0
-                y0, y1 = y1, y0
-                w0, w1 = w1, w0
-                u0_w, u1_w = u1_w, u0_w
-                v0_w, v1_w = v1_w, v0_w
-            end
-
-            local dy = y1 - y0
-            if dy == 0 then
-                goto continue_edge
-            end
-
-            local cy0 = flr(y0) + 1
-            local dx = (x1 - x0) / dy
-            local dw = (w1 - w0) / dy
-            local du_w = (u1_w - u0_w) / dy
-            local dv_w = (v1_w - v0_w) / dy
-
-            -- Starting position adjustment
-            local sy = cy0 - y0
-            if y0 < 0 then
-                sy = 0
-                cy0 = 0
-            end
-
-            x0 = x0 + sy * dx
-            w0 = w0 + sy * dw
-            u0_w = u0_w + sy * du_w
-            v0_w = v0_w + sy * dv_w
-
-            if y1 > 269 then
-                y1 = 269
-            end
-
-            -- Rasterize edge
-            for y=cy0, flr(y1) do
-                if not spans[y] then
-                    spans[y] = {}
-                end
-
-                add(spans[y], {
-                    x = x0,
-                    w = w0,
-                    u_w = u0_w,
-                    v_w = v0_w
-                })
-
-                x0 = x0 + dx
-                w0 = w0 + dw
-                u0_w = u0_w + du_w
-                v0_w = v0_w + dv_w
-            end
-
-            ::continue_edge::
-        end
-
-        -- Fill spans using tline3d
-        for y, span_list in pairs(spans) do
-            if #span_list >= 2 then
-                -- Sort by x coordinate
-                for i=1,#span_list-1 do
-                    for j=i+1,#span_list do
-                        if span_list[j].x < span_list[i].x then
-                            local temp = span_list[i]
-                            span_list[i] = span_list[j]
-                            span_list[j] = temp
-                        end
-                    end
-                end
-
-                -- Fill between pairs
-                for i=1,#span_list-1,2 do
-                    local left = span_list[i]
-                    local right = span_list[i+1]
-
-                    local x_start = flr(left.x)
-                    local x_end = flr(right.x)
-
-                    -- Clamp to screen
-                    x_start = max(0, x_start)
-                    x_end = min(479, x_end)
-
-                    if x_end > x_start then
-                        -- UVs are already in clipspace (u*w, v*w)
-                        -- Just multiply by texture_size for final coordinates
-                        local u0 = left.u_w * texture_size
-                        local v0 = left.v_w * texture_size
-                        local u1 = right.u_w * texture_size
-                        local v1 = right.v_w * texture_size
-
-                        -- Draw horizontal span with tline3d
-                        tline3d(
-                            floor_sprite,
-                            x_start, y,
-                            x_end, y,
-                            u0, v0,
-                            u1, v1,
-                            left.w, right.w
-                        )
-
-                        Raycaster.floor_spans_drawn = Raycaster.floor_spans_drawn + 1
-                    end
-                end
-            end
-        end
-
-        ::continue_floor::
-    end
+    Raycaster.floor_spans_drawn = 1
 end
 
 --[[
@@ -578,210 +462,14 @@ end
 function Raycaster.render_ceilings(map, player, ceiling_sprite, fog_start, fog_end)
     Raycaster.ceiling_spans_drawn = 0  -- Reset counter
 
-    local fov = Config.FOV
-    local near_plane = Config.NEAR_PLANE
-    local ceiling_height = Config.CEILING_HEIGHT
     local texture_size = Config.TEXTURE_SIZE
+    local uv_scale = Config.UV_SCALE
 
-    -- Process each ceiling polygon
-    for face in all(map.faces) do
-        -- Transform vertices to camera space (same as floor)
-        local cam_verts = {}
+    -- Raycast ceiling from top of screen to center
+    raycast_plane(player, ceiling_sprite, Config.CEILING_HEIGHT, uv_scale, texture_size,
+        0, Config.SCREEN_CENTER_Y - 1)
 
-        for i=1,#face do
-            local v_idx = face[i]
-            local v = map.vertices[v_idx]
-
-            -- Transform to camera space (same as floor but at ceiling height)
-            local dx = v.x - player.x
-            local dy = ceiling_height - player.y  -- Ceiling at fixed y=ceiling_height
-            local dz = v.z - player.z
-
-            -- Rotate by yaw
-            local cos_yaw = cos(player.angle)
-            local sin_yaw = sin(player.angle)
-            local rx = dx * cos_yaw - dz * sin_yaw
-            local rz = dx * sin_yaw + dz * cos_yaw
-
-            -- Rotate by pitch
-            local cos_pitch = cos(player.pitch)
-            local sin_pitch = sin(player.pitch)
-            local ry = dy * cos_pitch - rz * sin_pitch
-            local final_z = dy * sin_pitch + rz * cos_pitch
-
-            add(cam_verts, {
-                x = rx,
-                y = ry,
-                z = final_z,
-                world_x = v.x,
-                world_z = v.z
-            })
-        end
-
-        -- Clip against near plane
-        local clipped_verts = clip_polygon_near_plane(cam_verts, near_plane)
-
-        if #clipped_verts < 3 then
-            goto continue_ceiling
-        end
-
-        -- Project clipped vertices to screen (forward order first)
-        local screen_verts_temp = {}
-        for v in all(clipped_verts) do
-            -- If not already projected (from clipping)
-            if not v.w then
-                local screen_x = Config.SCREEN_CENTER_X + (v.x / v.z) * fov
-                local screen_y = Config.SCREEN_CENTER_Y - (v.y / v.z) * fov
-                add(screen_verts_temp, {
-                    x = screen_x,
-                    y = screen_y,
-                    z = v.z,
-                    w = 1 / v.z,
-                    world_x = v.world_x,
-                    world_z = v.world_z
-                })
-            else
-                add(screen_verts_temp, v)
-            end
-        end
-
-        -- Now reverse the order for ceiling winding
-        local screen_verts = {}
-        for i=#screen_verts_temp,1,-1 do
-            add(screen_verts, screen_verts_temp[i])
-        end
-
-        -- Build edge table for scanline rasterization
-        local spans = {}
-
-        -- UV scale factor - larger value = smaller tiles
-        local uv_scale = Config.UV_SCALE
-
-        -- For each edge of the polygon
-        for i=1,#screen_verts do
-            local v0 = screen_verts[i]
-            local v1 = screen_verts[(i % #screen_verts) + 1]
-
-            local x0, y0 = v0.x, v0.y
-            local x1, y1 = v1.x, v1.y
-            local w0, w1 = v0.w, v1.w
-
-            -- Scale down UVs for bigger tiles, then multiply by w for clipspace interpolation
-            local u0_w = v0.world_x * uv_scale * w0
-            local v0_w = v0.world_z * uv_scale * w0
-            local u1_w = v1.world_x * uv_scale * w1
-            local v1_w = v1.world_z * uv_scale * w1
-
-            -- Ensure y0 < y1
-            if y0 > y1 then
-                x0, x1 = x1, x0
-                y0, y1 = y1, y0
-                w0, w1 = w1, w0
-                u0_w, u1_w = u1_w, u0_w
-                v0_w, v1_w = v1_w, v0_w
-            end
-
-            local dy = y1 - y0
-            if dy == 0 then
-                goto continue_ceiling_edge
-            end
-
-            local cy0 = flr(y0) + 1
-            local dx = (x1 - x0) / dy
-            local dw = (w1 - w0) / dy
-            local du_w = (u1_w - u0_w) / dy
-            local dv_w = (v1_w - v0_w) / dy
-
-            -- Starting position adjustment
-            local sy = cy0 - y0
-            if y0 < 0 then
-                sy = 0
-                cy0 = 0
-            end
-
-            x0 = x0 + sy * dx
-            w0 = w0 + sy * dw
-            u0_w = u0_w + sy * du_w
-            v0_w = v0_w + sy * dv_w
-
-            if y1 > 269 then
-                y1 = 269
-            end
-
-            -- Rasterize edge
-            for y=cy0, flr(y1) do
-                if not spans[y] then
-                    spans[y] = {}
-                end
-
-                add(spans[y], {
-                    x = x0,
-                    w = w0,
-                    u_w = u0_w,
-                    v_w = v0_w
-                })
-
-                x0 = x0 + dx
-                w0 = w0 + dw
-                u0_w = u0_w + du_w
-                v0_w = v0_w + dv_w
-            end
-
-            ::continue_ceiling_edge::
-        end
-
-        -- Fill spans using tline3d
-        for y, span_list in pairs(spans) do
-            if #span_list >= 2 then
-                -- Sort by x coordinate
-                for i=1,#span_list-1 do
-                    for j=i+1,#span_list do
-                        if span_list[j].x < span_list[i].x then
-                            local temp = span_list[i]
-                            span_list[i] = span_list[j]
-                            span_list[j] = temp
-                        end
-                    end
-                end
-
-                -- Fill between pairs
-                for i=1,#span_list-1,2 do
-                    local left = span_list[i]
-                    local right = span_list[i+1]
-
-                    local x_start = flr(left.x)
-                    local x_end = flr(right.x)
-
-                    -- Clamp to screen
-                    x_start = max(0, x_start)
-                    x_end = min(479, x_end)
-
-                    if x_end > x_start then
-                        -- UVs are already in clipspace (u*w, v*w)
-                        -- Just multiply by texture_size for final coordinates
-                        local u0 = left.u_w * texture_size
-                        local v0 = left.v_w * texture_size
-                        local u1 = right.u_w * texture_size
-                        local v1 = right.v_w * texture_size
-
-                        -- Draw horizontal span with tline3d
-                        tline3d(
-                            ceiling_sprite,
-                            x_start, y,
-                            x_end, y,
-                            u0, v0,
-                            u1, v1,
-                            left.w, right.w
-                        )
-
-                        Raycaster.ceiling_spans_drawn = Raycaster.ceiling_spans_drawn + 1
-                    end
-                end
-            end
-        end
-
-        ::continue_ceiling::
-    end
+    Raycaster.ceiling_spans_drawn = 1
 end
 
 return Raycaster

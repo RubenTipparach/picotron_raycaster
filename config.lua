@@ -20,7 +20,7 @@ Config.FOV = 200  -- Higher = wider angle, lower = narrower/zoomed
 
 -- Texture settings
 Config.TEXTURE_SIZE = 32  -- Size of texture sprites (32x32)
-Config.UV_SCALE = 0.25    -- UV scale factor for floor/ceiling (0.25 = tiles 4x bigger)
+Config.UV_SCALE = .25     -- UV scale factor for floor/ceiling (smaller = bigger tiles)
 
 -- Sprite indices
 Config.SPRITE_WALL = 0
