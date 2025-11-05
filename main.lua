@@ -66,6 +66,7 @@ local map = {
     vertices = {},  -- {x, y, z}
     faces = {},     -- floor faces {v1, v2, v3, v4, ...}
     walls = {},     -- outer wall edges {v1, v2, height}
+    sectors = {},   -- sector-based structure for portal rendering
     bounds = {min_x=0, max_x=0, min_z=0, max_z=0}
 }
 
@@ -77,6 +78,8 @@ local last_mouse_y = 0
 -- Debug options
 local show_wireframe = false
 local show_walls = true
+local use_portal_rendering = false  -- Toggle between old and portal rendering
+local rendered_sectors = {}  -- Track which sectors were rendered (for wireframe)
 
 -- Performance tracking
 local frame_cpu = 0
@@ -163,6 +166,9 @@ function load_obj(filename)
     -- Extract outer walls (edges that appear only once)
     extract_outer_walls()
 
+    -- Build sector tree for portal rendering
+    build_sectors()
+
     -- Position player at center
     player.x = (map.bounds.min_x + map.bounds.max_x) / 2
     player.z = (map.bounds.min_z + map.bounds.max_z) / 2
@@ -247,6 +253,132 @@ function extract_outer_walls()
             })
         end
     end
+end
+
+--[[
+  Build sector tree for portal rendering
+  Each face becomes a sector with walls (portals or solid)
+]]
+function build_sectors()
+    -- Build edge-to-faces mapping
+    local edge_to_faces = {}  -- edge_key -> {face_idx1, face_idx2, ...}
+
+    for face_idx = 1, #map.faces do
+        local face = map.faces[face_idx]
+        for i = 1, #face do
+            local v1 = face[i]
+            local v2 = face[(i % #face) + 1]
+
+            -- Create normalized edge key (smaller index first)
+            local edge_key = min(v1, v2) .. "," .. max(v1, v2)
+
+            if not edge_to_faces[edge_key] then
+                edge_to_faces[edge_key] = {}
+            end
+            add(edge_to_faces[edge_key], {
+                face_idx = face_idx,
+                v1 = v1,
+                v2 = v2
+            })
+        end
+    end
+
+    -- Build sectors - one sector per face
+    map.sectors = {}
+    for face_idx = 1, #map.faces do
+        local face = map.faces[face_idx]
+        local sector = {
+            floor_face = face,
+            floor_height = 0,  -- Default floor height (from vertex Y)
+            ceiling_height = Config.WALL_HEIGHT,
+            walls = {}
+        }
+
+        -- Build walls for this sector
+        for i = 1, #face do
+            local v1 = face[i]
+            local v2 = face[(i % #face) + 1]
+
+            -- Create normalized edge key
+            local edge_key = min(v1, v2) .. "," .. max(v1, v2)
+            local edge_faces = edge_to_faces[edge_key]
+
+            -- Calculate wall normal (points inward to sector)
+            local vert1 = map.vertices[v1]
+            local vert2 = map.vertices[v2]
+            local edge_dx = vert2.x - vert1.x
+            local edge_dz = vert2.z - vert1.z
+
+            -- Normal points right of edge direction (inward)
+            local normal_x = edge_dz
+            local normal_z = -edge_dx
+
+            local wall = {
+                v1 = v1,
+                v2 = v2,
+                normal_x = normal_x,
+                normal_z = normal_z,
+                portal_to = nil  -- Will be set if this is a portal
+            }
+
+            -- Check if this edge is shared with another face (portal)
+            if #edge_faces == 2 then
+                -- This is a portal - find the neighboring sector
+                local neighbor_idx
+                for edge_info in all(edge_faces) do
+                    if edge_info.face_idx ~= face_idx then
+                        neighbor_idx = edge_info.face_idx
+                        break
+                    end
+                end
+                wall.portal_to = neighbor_idx
+            end
+            -- If #edge_faces == 1, it's a solid wall (portal_to stays nil)
+
+            add(sector.walls, wall)
+        end
+
+        add(map.sectors, sector)
+    end
+
+    printh("Built " .. #map.sectors .. " sectors")
+end
+
+--[[
+  Find which sector contains a given point (x, z)
+  Uses point-in-polygon test
+  Returns sector index or nil
+]]
+function find_player_sector(x, z)
+    for sector_idx = 1, #map.sectors do
+        local sector = map.sectors[sector_idx]
+        local face = sector.floor_face
+
+        -- Point-in-polygon test using ray casting algorithm
+        local inside = false
+        local n = #face
+
+        for i = 1, n do
+            local v1_idx = face[i]
+            local v2_idx = face[(i % n) + 1]
+            local v1 = map.vertices[v1_idx]
+            local v2 = map.vertices[v2_idx]
+
+            -- Check if ray from point crosses this edge
+            if ((v1.z > z) ~= (v2.z > z)) then
+                local x_intersect = (v2.x - v1.x) * (z - v1.z) / (v2.z - v1.z) + v1.x
+                if x < x_intersect then
+                    inside = not inside
+                end
+            end
+        end
+
+        if inside then
+            return sector_idx
+        end
+    end
+
+    return nil
 end
 
 --[[
@@ -420,6 +552,11 @@ function update_movement(dt)
     if keyp("1") then
         show_walls = not show_walls
     end
+
+    -- Toggle portal rendering (P)
+    if keyp("p") then
+        use_portal_rendering = not use_portal_rendering
+    end
 end
 
 --[[
@@ -494,20 +631,35 @@ end
 function _draw()
     cls(1)  -- clear to dark blue
 
-    -- Render floors/ceilings using horizontal spans (draw first, behind walls)
-    profile("floors")
-    Raycaster.render_floors(map, player, floor_sprite, FOG_START, FOG_END)
-    profile("floors")
+    -- Initialize occlusion buffer for this frame
+    Raycaster.init_occlusion_buffer()
 
-    profile("ceilings")
-    Raycaster.render_ceilings(map, player, ceiling_sprite, FOG_START, FOG_END)
-    profile("ceilings")
+    if use_portal_rendering then
+        -- Portal rendering: recursively render visible sectors
+        profile("portal")
+        local player_sector = find_player_sector(player.x, player.z)
+        -- Clear rendered sectors from last frame
+        rendered_sectors = {}
+        if player_sector then
+            Raycaster.render_portals(map, player, player_sector, wall_sprite, floor_sprite, ceiling_sprite, nil, rendered_sectors, show_walls)
+        end
+        profile("portal")
+    else
+        -- Old rendering: render all floors, ceilings, and walls
+        profile("floors")
+        Raycaster.render_floors(map, player, floor_sprite, FOG_START, FOG_END)
+        profile("floors")
 
-    -- Render walls using raycaster module (now handles its own clipping)
-    if show_walls then
-        profile("walls")
-        Raycaster.render_walls(map, player, wall_sprite, FOG_START, FOG_END)
-        profile("walls")
+        profile("ceilings")
+        Raycaster.render_ceilings(map, player, ceiling_sprite, FOG_START, FOG_END)
+        profile("ceilings")
+
+        -- Render walls using raycaster module (now handles its own clipping)
+        if show_walls then
+            profile("walls")
+            Raycaster.render_walls(map, player, wall_sprite, FOG_START, FOG_END)
+            profile("walls")
+        end
     end
 
     -- Disable color table for UI rendering (restore normal colors)
@@ -538,52 +690,58 @@ end
   Render debug wireframe lines with proper clipping
 ]]
 function render_debug_lines()
-    -- Draw floor edges
-    color(11)  -- light blue
-    for face in all(map.faces) do
-        for i=1,#face do
-            local v1_idx = face[i]
-            local v2_idx = face[(i % #face) + 1]
-            local v1 = map.vertices[v1_idx]
-            local v2 = map.vertices[v2_idx]
+    -- Draw all sector walls
+    for sector_idx = 1, #map.sectors do
+        local sector = map.sectors[sector_idx]
 
-            -- Use clipping for floor edges
-            local p1, p2 = clip_line_to_near_plane(v1.x, v1.y, v1.z, v2.x, v2.y, v2.z)
+        -- Check if this sector was rendered (only relevant in portal mode)
+        local is_rendered = not use_portal_rendering or rendered_sectors[sector_idx]
 
-            if p1 and p2 then
-                line(p1.x, p1.y, p2.x, p2.y)
+        for wall in all(sector.walls) do
+            local v1 = map.vertices[wall.v1]
+            local v2 = map.vertices[wall.v2]
+
+            -- Color based on portal type and render status
+            if not is_rendered then
+                color(1)  -- dark blue = culled sector (not rendered)
+            elseif wall.portal_to then
+                color(11)  -- green = portal
+            else
+                color(10)  -- yellow = solid wall
             end
-        end
-    end
 
-    -- Draw walls (thicker, different color)
-    color(10)  -- yellow
-    for wall in all(map.walls) do
-        local v1 = map.vertices[wall.v1]
-        local v2 = map.vertices[wall.v2]
+            -- Draw bottom edge with clipping
+            local bottom1, bottom2 = clip_line_to_near_plane(v1.x, v1.y, v1.z, v2.x, v2.y, v2.z)
 
-        -- Draw bottom edge with clipping
-        local bottom1, bottom2 = clip_line_to_near_plane(v1.x, 0, v1.z, v2.x, 0, v2.z)
+            -- Draw top edge with clipping
+            local top1, top2 = clip_line_to_near_plane(
+                v1.x, v1.y + sector.ceiling_height, v1.z,
+                v2.x, v2.y + sector.ceiling_height, v2.z
+            )
 
-        -- Draw top edge with clipping
-        local top1, top2 = clip_line_to_near_plane(v1.x, wall.height, v1.z, v2.x, wall.height, v2.z)
+            -- Draw vertical edges with clipping
+            local left1, left2 = clip_line_to_near_plane(
+                v1.x, v1.y, v1.z,
+                v1.x, v1.y + sector.ceiling_height, v1.z
+            )
+            local right1, right2 = clip_line_to_near_plane(
+                v2.x, v2.y, v2.z,
+                v2.x, v2.y + sector.ceiling_height, v2.z
+            )
 
-        -- Draw vertical edges with clipping
-        local left1, left2 = clip_line_to_near_plane(v1.x, 0, v1.z, v1.x, wall.height, v1.z)
-        local right1, right2 = clip_line_to_near_plane(v2.x, 0, v2.z, v2.x, wall.height, v2.z)
-
-        -- Draw all edges that are visible (even partially)
-        if bottom1 and bottom2 then
-            line(bottom1.x, bottom1.y, bottom2.x, bottom2.y)
-        end
-        if top1 and top2 then
-            line(top1.x, top1.y, top2.x, top2.y)
-        end
-        if left1 and left2 then
-            line(left1.x, left1.y, left2.x, left2.y)
-        end
-        if right1 and right2 then
-            line(right1.x, right1.y, right2.x, right2.y)
+            -- Draw all edges that are visible
+            if bottom1 and bottom2 then
+                line(bottom1.x, bottom1.y, bottom2.x, bottom2.y)
+            end
+            if top1 and top2 then
+                line(top1.x, top1.y, top2.x, top2.y)
+            end
+            if left1 and left2 then
+                line(left1.x, left1.y, left2.x, left2.y)
+            end
+            if right1 and right2 then
+                line(right1.x, right1.y, right2.x, right2.y)
+            end
         end
     end
 end
@@ -777,6 +935,41 @@ end
 ]]
 function draw_hud()
     color(7)
+
+    -- Player sector info
+    local player_sector = find_player_sector(player.x, player.z)
+    if player_sector then
+        local sector = map.sectors[player_sector]
+        local portal_count = 0
+        local solid_count = 0
+
+        for wall in all(sector.walls) do
+            if wall.portal_to then
+                portal_count = portal_count + 1
+            else
+                solid_count = solid_count + 1
+            end
+        end
+
+        print("sector: " .. player_sector, 2, 2, 0)
+        print("sector: " .. player_sector, 2, 2)
+        print("portals: " .. portal_count, 2, 10, 0)
+        print("portals: " .. portal_count, 2, 10)
+        print("solid: " .. solid_count, 2, 18, 0)
+        print("solid: " .. solid_count, 2, 18)
+    end
+
+    -- Occlusion statistics
+    local occluded, total, pct = Raycaster.get_occlusion_stats()
+    print("occluded: " .. occluded .. "/" .. total, 2, 26, 0)
+    print("occluded: " .. occluded .. "/" .. total, 2, 26)
+    print("occlusion: " .. flr(pct) .. "%", 2, 34, 0)
+    print("occlusion: " .. flr(pct) .. "%", 2, 34)
+
+    -- Rendering mode
+    local render_mode = use_portal_rendering and "portal" or "classic"
+    print("render(p): " .. render_mode, 2, 42, 0)
+    print("render(p): " .. render_mode, 2, 42)
 
     -- -- Position
     -- print("pos: " .. flr(player.x*10)/10 .. ", " .. flr(player.z*10)/10, 2, 2, 0)
