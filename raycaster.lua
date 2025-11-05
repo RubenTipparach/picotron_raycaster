@@ -233,6 +233,20 @@ function Raycaster.is_portal_occluded(x_min, x_max, y_min, y_max)
 end
 
 --[[
+  Check if one bounding box is completely contained within another
+  @param inner_x_min, inner_x_max, inner_y_min, inner_y_max: inner box bounds
+  @param outer_x_min, outer_x_max, outer_y_min, outer_y_max: outer box bounds
+  @return true if inner box is completely contained within outer box
+]]
+function Raycaster.is_box_contained(inner_x_min, inner_x_max, inner_y_min, inner_y_max,
+                                     outer_x_min, outer_x_max, outer_y_min, outer_y_max)
+    return inner_x_min >= outer_x_min and
+           inner_x_max <= outer_x_max and
+           inner_y_min >= outer_y_min and
+           inner_y_max <= outer_y_max
+end
+
+--[[
   Portal rendering: recursively render visible sectors
   This is the core of Doom-style rendering!
 
@@ -307,6 +321,24 @@ function Raycaster.render_portals(map, player, start_sector_idx, wall_sprite, fl
         Raycaster.render_sector_floor(map, player, sector, floor_sprite)
         Raycaster.render_sector_ceiling(map, player, sector, ceiling_sprite)
 
+        -- Collect solid wall bounding boxes for portal culling
+        -- We need these BEFORE processing portals to check containment
+        local solid_wall_boxes = {}
+        for wall_data in all(visible_walls) do
+            if not wall_data.is_portal then
+                local wall = wall_data.wall
+                local wx_min, wx_max, wy_min, wy_max = Raycaster.get_portal_screen_bounds(map, player, wall, sector)
+                if wx_min then
+                    add(solid_wall_boxes, {
+                        x_min = wx_min,
+                        x_max = wx_max,
+                        y_min = wy_min,
+                        y_max = wy_max
+                    })
+                end
+            end
+        end
+
         -- Sort portals by depth (BACK-TO-FRONT for Doom-style rendering)
         for i = 2, #visible_portals do
             local key = visible_portals[i]
@@ -326,9 +358,25 @@ function Raycaster.render_portals(map, player, start_sector_idx, wall_sprite, fl
                 -- Calculate portal's screen-space bounding box
                 local x_min, x_max, y_min, y_max = Raycaster.get_portal_screen_bounds(map, player, portal, sector)
 
-                -- Only recurse if portal is visible (not fully occluded)
-                if x_min and not Raycaster.is_portal_occluded(x_min, x_max, y_min, y_max) then
-                    render_sector(portal.portal_to, depth + 1)
+                if x_min then
+                    -- Check if portal is fully occluded by occlusion buffer
+                    local buffer_occluded = Raycaster.is_portal_occluded(x_min, x_max, y_min, y_max)
+
+                    -- Check if portal is contained within any solid wall's bounding box
+                    local contained_by_wall = false
+                    for wall_box in all(solid_wall_boxes) do
+                        if Raycaster.is_box_contained(x_min, x_max, y_min, y_max,
+                                                       wall_box.x_min, wall_box.x_max,
+                                                       wall_box.y_min, wall_box.y_max) then
+                            contained_by_wall = true
+                            break
+                        end
+                    end
+
+                    -- Only recurse if portal is visible and not hidden behind a wall
+                    if not buffer_occluded and not contained_by_wall then
+                        render_sector(portal.portal_to, depth + 1)
+                    end
                 end
             end
         end
