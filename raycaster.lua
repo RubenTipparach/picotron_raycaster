@@ -61,10 +61,11 @@ local function clip_wall_quad(player, v1, v2, wall_height, fov, near_plane)
     end
 
     -- Get all 4 corners in camera space
-    local cx1, cy1_bottom, cz1 = to_camera_space(v1.x, 0, v1.z)
-    local _, cy1_top, _ = to_camera_space(v1.x, wall_height, v1.z)
-    local cx2, cy2_bottom, cz2 = to_camera_space(v2.x, 0, v2.z)
-    local _, cy2_top, _ = to_camera_space(v2.x, wall_height, v2.z)
+    -- Use actual vertex Y coordinates for floor height
+    local cx1, cy1_bottom, cz1 = to_camera_space(v1.x, v1.y, v1.z)
+    local _, cy1_top, _ = to_camera_space(v1.x, v1.y + wall_height, v1.z)
+    local cx2, cy2_bottom, cz2 = to_camera_space(v2.x, v2.y, v2.z)
+    local _, cy2_top, _ = to_camera_space(v2.x, v2.y + wall_height, v2.z)
 
     -- Clip against near plane (Z axis)
     local u_start = 0
@@ -438,9 +439,64 @@ local function clip_polygon_near_plane(verts, near_plane)
     return result
 end
 
+-- Scanline buffer for textured triangle rendering (shared with walls)
+local scanlines = userdata("f64", 11, 270)
+
+-- Helper function to render a textured triangle
+-- Uses the same scanline rasterizer as the lounge renderer
+local function render_textured_triangle(sprite, vert_data)
+    -- Sort vertices by Y coordinate
+    vert_data:sort(1)
+
+    local x1, y1, w1, y2, w2, x3, y3, w3 =
+        vert_data[0], vert_data[1], vert_data[3],
+        vert_data[7], vert_data[9],
+        vert_data[12], vert_data[13], vert_data[15]
+
+    -- Get UV coordinates (already multiplied by w)
+    local uv1 = vec(vert_data[4], vert_data[5])
+    local uv3 = vec(vert_data[16], vert_data[17])
+
+    local t = (y2 - y1) / (y3 - y1)
+    local uvd = (uv3 - uv1) * t + uv1
+    local v1, v2 =
+        vec(sprite, x1, y1, x1, y1, uv1.x, uv1.y, uv1.x, uv1.y, w1, w1),
+        vec(
+            sprite,
+            vert_data[6], y2,
+            (x3 - x1) * t + x1, y2,
+            vert_data[10], vert_data[11],
+            uvd.x, uvd.y,
+            w2, (w3 - w1) * t + w1
+        )
+
+    local screen_height = Config.SCREEN_HEIGHT
+    local start_y = y1 < -1 and -1 or flr(y1)
+    local mid_y = y2 < -1 and -1 or y2 > screen_height - 1 and screen_height - 1 or flr(y2)
+    local stop_y = (y3 <= screen_height - 1 and flr(y3) or screen_height - 1)
+
+    -- Top half
+    local dy = mid_y - start_y
+    if dy > 0 then
+        local slope = (v2 - v1):div((y2 - y1))
+        scanlines:copy(slope * (start_y + 1 - y1) + v1, true, 0, 0, 11)
+            :copy(slope, true, 0, 11, 11, 0, 11, dy - 1)
+        tline3d(scanlines:add(scanlines, true, 0, 11, 11, 11, 11, dy - 1), 0, dy)
+    end
+
+    -- Bottom half
+    dy = stop_y - mid_y
+    if dy > 0 then
+        local slope = (vec(sprite, x3, y3, x3, y3, uv3.x, uv3.y, uv3.x, uv3.y, w3, w3) - v2) / (y3 - y2)
+        scanlines:copy(slope * (mid_y + 1 - y2) + v2, true, 0, 0, 11)
+            :copy(slope, true, 0, 11, 11, 0, 11, dy - 1)
+        tline3d(scanlines:add(scanlines, true, 0, 11, 11, 11, 11, dy - 1), 0, dy)
+    end
+end
+
 --[[
-  Render floor for sector polygons using tline3d
-  Uses perspective-correct texture mapping for 3D grid effect
+  Render floor polygons using per-face projection
+  Supports multiple floor heights (stairs, ledges, platforms)
 
   @param map: map data with faces and vertices
   @param player: player object with position and rotation
@@ -453,17 +509,181 @@ function Raycaster.render_floors(map, player, floor_sprite, fog_start, fog_end)
 
     local texture_size = Config.TEXTURE_SIZE
     local uv_scale = Config.UV_SCALE
+    local fov = Config.FOV
+    local near_plane = Config.NEAR_PLANE
 
-    -- Raycast floor from center of screen to bottom
-    raycast_plane(player, floor_sprite, Config.FLOOR_HEIGHT, uv_scale, texture_size,
-        Config.SCREEN_CENTER_Y, Config.SCREEN_HEIGHT - 1)
+    -- Precompute camera transform
+    local cos_yaw = cos(player.angle)
+    local sin_yaw = sin(player.angle)
+    local cos_pitch = cos(player.pitch)
+    local sin_pitch = sin(player.pitch)
 
-    Raycaster.floor_spans_drawn = 1
+    -- Process each floor face
+    for face in all(map.faces) do
+        -- Get vertices for this face (use actual Y from OBJ file)
+        local face_verts = {}
+        for i = 1, #face do
+            local v = map.vertices[face[i]]
+            add(face_verts, {x = v.x, y = v.y, z = v.z})
+        end
+
+        -- Calculate face center for distance culling
+        local center_x, center_z = 0, 0
+        for v in all(face_verts) do
+            center_x = center_x + v.x
+            center_z = center_z + v.z
+        end
+        center_x = center_x / #face_verts
+        center_z = center_z / #face_verts
+
+        -- Distance culling
+        local dx = center_x - player.x
+        local dz = center_z - player.z
+        local dist_sq = dx*dx + dz*dz
+        if dist_sq > 400 then  -- 20 units distance
+            goto continue_face
+        end
+
+        -- Transform vertices to camera space
+        local camera_space = {}
+        for v in all(face_verts) do
+            -- World to camera space
+            local wx = v.x - player.x
+            local wy = v.y - player.y
+            local wz = v.z - player.z
+
+            -- Rotate by yaw
+            local cx = wx * cos_yaw - wz * sin_yaw
+            local cz = wx * sin_yaw + wz * cos_yaw
+
+            -- Rotate by pitch
+            local cy = wy * cos_pitch - cz * sin_pitch
+            local final_z = wy * sin_pitch + cz * cos_pitch
+
+            -- Calculate UVs
+            local u = v.x * uv_scale * texture_size
+            local v_coord = v.z * uv_scale * texture_size
+
+            -- Store camera space vertex (even if behind camera, for clipping)
+            add(camera_space, {
+                x = cx,
+                y = cy,
+                z = final_z,
+                u = u,
+                v = v_coord
+            })
+        end
+
+        -- Clip polygon against near plane
+        local projected = {}
+        for i = 1, #camera_space do
+            local v0 = camera_space[i]
+            local v1 = camera_space[(i % #camera_space) + 1]
+
+            local behind0 = v0.z < near_plane
+            local behind1 = v1.z < near_plane
+
+            -- Vertex in front - add it
+            if not behind0 then
+                local inv_z = 1 / v0.z
+                local screen_x = Config.SCREEN_CENTER_X + (v0.x * inv_z * fov)
+                local screen_y = Config.SCREEN_CENTER_Y - (v0.y * inv_z * fov)
+
+                add(projected, {
+                    x = screen_x,
+                    y = screen_y,
+                    z = v0.z,
+                    w = inv_z,
+                    u = v0.u,
+                    v = v0.v
+                })
+            end
+
+            -- Edge crosses near plane - add intersection point
+            if behind0 ~= behind1 then
+                local t = (near_plane - v0.z) / (v1.z - v0.z)
+                local clipped_z = near_plane
+                local clipped_x = v0.x + (v1.x - v0.x) * t
+                local clipped_y = v0.y + (v1.y - v0.y) * t
+                local clipped_u = v0.u + (v1.u - v0.u) * t
+                local clipped_v = v0.v + (v1.v - v0.v) * t
+
+                -- Project clipped vertex
+                local inv_z = 1 / clipped_z
+                local screen_x = Config.SCREEN_CENTER_X + (clipped_x * inv_z * fov)
+                local screen_y = Config.SCREEN_CENTER_Y - (clipped_y * inv_z * fov)
+
+                add(projected, {
+                    x = screen_x,
+                    y = screen_y,
+                    z = clipped_z,
+                    w = inv_z,
+                    u = clipped_u,
+                    v = clipped_v
+                })
+            end
+        end
+
+        -- Need at least 3 vertices after clipping
+        if #projected < 3 then
+            goto continue_face
+        end
+
+        -- Backface culling (faces pointing away from camera)
+        local v0, v1, v2 = projected[1], projected[2], projected[3]
+        local cross = (v1.x - v0.x) * (v2.y - v0.y) - (v1.y - v0.y) * (v2.x - v0.x)
+        if cross <= 0 then  -- Clockwise = front-facing for floor
+            goto continue_face
+        end
+
+        -- Render face as triangle fan (works for convex polygons)
+        -- Using tline3d to draw textured triangles
+        for i = 2, #projected - 1 do
+            local p0 = projected[1]
+            local p1 = projected[i]
+            local p2 = projected[i + 1]
+
+            -- Create userdata for triangle vertices (x, y, z, w, u, v)
+            -- Format: 6 values per vertex, 3 vertices = 18 values
+            local tri_data = userdata("f64", 6, 3)
+
+            -- Vertex 0
+            tri_data[0] = p0.x
+            tri_data[1] = p0.y
+            tri_data[2] = 0  -- z (screen space, always 0)
+            tri_data[3] = p0.w
+            tri_data[4] = p0.u * p0.w
+            tri_data[5] = p0.v * p0.w
+
+            -- Vertex 1
+            tri_data[6] = p1.x
+            tri_data[7] = p1.y
+            tri_data[8] = 0
+            tri_data[9] = p1.w
+            tri_data[10] = p1.u * p1.w
+            tri_data[11] = p1.v * p1.w
+
+            -- Vertex 2
+            tri_data[12] = p2.x
+            tri_data[13] = p2.y
+            tri_data[14] = 0
+            tri_data[15] = p2.w
+            tri_data[16] = p2.u * p2.w
+            tri_data[17] = p2.v * p2.w
+
+            -- Render triangle using textri helper
+            render_textured_triangle(floor_sprite, tri_data)
+        end
+
+        Raycaster.floor_spans_drawn = Raycaster.floor_spans_drawn + 1
+
+        ::continue_face::
+    end
 end
 
 --[[
-  Render ceiling for sector polygons using tline3d
-  Uses perspective-correct texture mapping for 3D grid effect
+  Render ceiling polygons using per-face projection
+  Supports multiple ceiling heights
 
   @param map: map data with faces and vertices
   @param player: player object with position and rotation
@@ -476,12 +696,176 @@ function Raycaster.render_ceilings(map, player, ceiling_sprite, fog_start, fog_e
 
     local texture_size = Config.TEXTURE_SIZE
     local uv_scale = Config.UV_SCALE
+    local fov = Config.FOV
+    local near_plane = Config.NEAR_PLANE
 
-    -- Raycast ceiling from top of screen to center
-    raycast_plane(player, ceiling_sprite, Config.CEILING_HEIGHT, uv_scale, texture_size,
-        0, Config.SCREEN_CENTER_Y - 1)
+    -- Precompute camera transform
+    local cos_yaw = cos(player.angle)
+    local sin_yaw = sin(player.angle)
+    local cos_pitch = cos(player.pitch)
+    local sin_pitch = sin(player.pitch)
 
-    Raycaster.ceiling_spans_drawn = 1
+    -- Process each ceiling face
+    for face in all(map.faces) do
+        -- Get vertices for this face (ceiling at wall height above floor)
+        local face_verts = {}
+        for i = 1, #face do
+            local v = map.vertices[face[i]]
+            -- Ceiling is at floor Y + wall height
+            add(face_verts, {x = v.x, y = v.y + Config.WALL_HEIGHT, z = v.z})
+        end
+
+        -- Calculate face center for distance culling
+        local center_x, center_z = 0, 0
+        for v in all(face_verts) do
+            center_x = center_x + v.x
+            center_z = center_z + v.z
+        end
+        center_x = center_x / #face_verts
+        center_z = center_z / #face_verts
+
+        -- Distance culling
+        local dx = center_x - player.x
+        local dz = center_z - player.z
+        local dist_sq = dx*dx + dz*dz
+        if dist_sq > 400 then  -- 20 units distance
+            goto continue_face
+        end
+
+        -- Transform vertices to camera space
+        local camera_space = {}
+        for v in all(face_verts) do
+            -- World to camera space
+            local wx = v.x - player.x
+            local wy = v.y - player.y
+            local wz = v.z - player.z
+
+            -- Rotate by yaw
+            local cx = wx * cos_yaw - wz * sin_yaw
+            local cz = wx * sin_yaw + wz * cos_yaw
+
+            -- Rotate by pitch
+            local cy = wy * cos_pitch - cz * sin_pitch
+            local final_z = wy * sin_pitch + cz * cos_pitch
+
+            -- Calculate UVs
+            local u = v.x * uv_scale * texture_size
+            local v_coord = v.z * uv_scale * texture_size
+
+            -- Store camera space vertex (even if behind camera, for clipping)
+            add(camera_space, {
+                x = cx,
+                y = cy,
+                z = final_z,
+                u = u,
+                v = v_coord
+            })
+        end
+
+        -- Clip polygon against near plane
+        local projected = {}
+        for i = 1, #camera_space do
+            local v0 = camera_space[i]
+            local v1 = camera_space[(i % #camera_space) + 1]
+
+            local behind0 = v0.z < near_plane
+            local behind1 = v1.z < near_plane
+
+            -- Vertex in front - add it
+            if not behind0 then
+                local inv_z = 1 / v0.z
+                local screen_x = Config.SCREEN_CENTER_X + (v0.x * inv_z * fov)
+                local screen_y = Config.SCREEN_CENTER_Y - (v0.y * inv_z * fov)
+
+                add(projected, {
+                    x = screen_x,
+                    y = screen_y,
+                    z = v0.z,
+                    w = inv_z,
+                    u = v0.u,
+                    v = v0.v
+                })
+            end
+
+            -- Edge crosses near plane - add intersection point
+            if behind0 ~= behind1 then
+                local t = (near_plane - v0.z) / (v1.z - v0.z)
+                local clipped_z = near_plane
+                local clipped_x = v0.x + (v1.x - v0.x) * t
+                local clipped_y = v0.y + (v1.y - v0.y) * t
+                local clipped_u = v0.u + (v1.u - v0.u) * t
+                local clipped_v = v0.v + (v1.v - v0.v) * t
+
+                -- Project clipped vertex
+                local inv_z = 1 / clipped_z
+                local screen_x = Config.SCREEN_CENTER_X + (clipped_x * inv_z * fov)
+                local screen_y = Config.SCREEN_CENTER_Y - (clipped_y * inv_z * fov)
+
+                add(projected, {
+                    x = screen_x,
+                    y = screen_y,
+                    z = clipped_z,
+                    w = inv_z,
+                    u = clipped_u,
+                    v = clipped_v
+                })
+            end
+        end
+
+        -- Need at least 3 vertices after clipping
+        if #projected < 3 then
+            goto continue_face
+        end
+
+        -- Backface culling (faces pointing away from camera)
+        -- For ceiling, we want counter-clockwise winding (opposite of floor)
+        local v0, v1, v2 = projected[1], projected[2], projected[3]
+        local cross = (v1.x - v0.x) * (v2.y - v0.y) - (v1.y - v0.y) * (v2.x - v0.x)
+        if cross >= 0 then  -- Counter-clockwise = back-facing for ceiling
+            goto continue_face
+        end
+
+        -- Render face as triangle fan (works for convex polygons)
+        for i = 2, #projected - 1 do
+            local p0 = projected[1]
+            local p1 = projected[i]
+            local p2 = projected[i + 1]
+
+            -- Create userdata for triangle vertices
+            local tri_data = userdata("f64", 6, 3)
+
+            -- Vertex 0
+            tri_data[0] = p0.x
+            tri_data[1] = p0.y
+            tri_data[2] = 0
+            tri_data[3] = p0.w
+            tri_data[4] = p0.u * p0.w
+            tri_data[5] = p0.v * p0.w
+
+            -- Vertex 1
+            tri_data[6] = p1.x
+            tri_data[7] = p1.y
+            tri_data[8] = 0
+            tri_data[9] = p1.w
+            tri_data[10] = p1.u * p1.w
+            tri_data[11] = p1.v * p1.w
+
+            -- Vertex 2
+            tri_data[12] = p2.x
+            tri_data[13] = p2.y
+            tri_data[14] = 0
+            tri_data[15] = p2.w
+            tri_data[16] = p2.u * p2.w
+            tri_data[17] = p2.v * p2.w
+
+            -- Render triangle
+            render_textured_triangle(ceiling_sprite, tri_data)
+        end
+
+        Raycaster.ceiling_spans_drawn = Raycaster.ceiling_spans_drawn + 1
+
+        ::continue_face::
+    end
 end
 
 return Raycaster
