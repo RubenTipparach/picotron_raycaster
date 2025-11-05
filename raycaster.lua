@@ -331,8 +331,9 @@ local function raycast_plane(player, sprite, plane_height, uv_scale, texture_siz
     -- Rotating direction by +0.25 (90° right): (sin(a), cos(a)) -> (sin(a+0.25), cos(a+0.25)) = (cos(a), -sin(a))
     -- Rotating direction by -0.25 (90° left):  (sin(a), cos(a)) -> (sin(a-0.25), cos(a-0.25)) = (-cos(a), sin(a))
     -- We want the plane to point to the right (like strafe right), so use +90°
-    local plane_x = cos_yaw * 0.66* 2
-    local plane_z = -sin_yaw * 0.66
+    -- Scale uniformly - multiply by 2 to match the step calculation below (which also uses * 2)
+    local plane_x = cos_yaw * 0.66 * 2
+    local plane_z = -sin_yaw * 0.66 * 2
 
     -- For each screen row from y_start to y_end
     for screen_y = y_start, y_end do
