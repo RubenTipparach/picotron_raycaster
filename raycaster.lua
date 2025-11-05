@@ -11,6 +11,16 @@
 local Config = include("config.lua")
 local Raycaster = {}
 
+-- OPTIMIZATION: Cache frequently accessed Config constants as locals (2-3x faster than table lookups)
+local SCREEN_WIDTH = Config.SCREEN_WIDTH
+local SCREEN_HEIGHT = Config.SCREEN_HEIGHT
+local SCREEN_CENTER_X = Config.SCREEN_CENTER_X
+local SCREEN_CENTER_Y = Config.SCREEN_CENTER_Y
+local FOV = Config.FOV
+local NEAR_PLANE = Config.NEAR_PLANE
+local TEXTURE_SIZE = Config.TEXTURE_SIZE
+local UV_SCALE = Config.UV_SCALE
+
 -- Performance tracking
 Raycaster.columns_drawn = 0
 Raycaster.floor_spans_drawn = 0
@@ -22,14 +32,48 @@ Raycaster.ceiling_spans_drawn = 0
 -- As walls are drawn, the range shrinks
 local occlusion_buffer = {}
 
+-- Camera transform cache (computed once per frame)
+-- Stores cos/sin of player angle and pitch to avoid redundant trig calculations
+local camera_transform = {
+    cos_yaw = 1,
+    sin_yaw = 0,
+    cos_pitch = 1,
+    sin_pitch = 0
+}
+
+-- OPTIMIZATION: Pre-allocated triangle buffer (reused to avoid allocations)
+-- Format: 6 values per vertex (x, y, z, w, u*w, v*w) × 3 vertices = 18 values
+local triangle_buffer = userdata("f64", 6, 3)
+
+-- OPTIMIZATION: Pre-allocated batch buffer for multiple triangles
+-- Can hold up to 100 triangles (600 values) for batched rendering
+local max_batch_triangles = 100
+local triangle_batch_buffer = userdata("f64", 6, max_batch_triangles * 3)
+local triangle_batch_count = 0
+
+-- OPTIMIZATION: Pre-allocated column buffer for tline3d (MASSIVE savings!)
+-- Format: 11 values per column (sprite, x1, y1, x2, y2, u1*w1, v1*w1, u2*w2, v2*w2, w1, w2)
+local column_buffer = userdata("f64", 11, 1)
+
+--[[
+  Update camera transform cache from player state
+  Call this ONCE at the start of each frame to cache trig calculations
+]]
+function Raycaster.update_camera_transform(player)
+    camera_transform.cos_yaw = cos(player.angle)
+    camera_transform.sin_yaw = sin(player.angle)
+    camera_transform.cos_pitch = cos(player.pitch)
+    camera_transform.sin_pitch = sin(player.pitch)
+end
+
 --[[
   Initialize occlusion buffer - all columns fully open
 ]]
 function Raycaster.init_occlusion_buffer()
-    for x = 0, Config.SCREEN_WIDTH - 1 do
+    for x = 0, SCREEN_WIDTH - 1 do
         occlusion_buffer[x] = {
             top_y = 0,              -- Top of visible region (starts at top of screen)
-            bottom_y = Config.SCREEN_HEIGHT - 1  -- Bottom of visible region (starts at bottom)
+            bottom_y = SCREEN_HEIGHT - 1  -- Bottom of visible region (starts at bottom)
         }
     end
 end
@@ -41,7 +85,7 @@ end
   @param wall_bottom_y: bottom Y of wall
 ]]
 function Raycaster.mark_column_filled(x, wall_top_y, wall_bottom_y)
-    if x < 0 or x >= Config.SCREEN_WIDTH then return end
+    if x < 0 or x >= SCREEN_WIDTH then return end
 
     local col = occlusion_buffer[x]
 
@@ -67,7 +111,7 @@ end
   @return true if fully occluded
 ]]
 function Raycaster.is_column_occluded(x)
-    if x < 0 or x >= Config.SCREEN_WIDTH then return true end
+    if x < 0 or x >= SCREEN_WIDTH then return true end
     local col = occlusion_buffer[x]
     return col.top_y >= col.bottom_y
 end
@@ -78,7 +122,7 @@ end
   @return top_y, bottom_y (or nil if fully occluded)
 ]]
 function Raycaster.get_visible_range(x)
-    if x < 0 or x >= Config.SCREEN_WIDTH then return nil end
+    if x < 0 or x >= SCREEN_WIDTH then return nil end
     local col = occlusion_buffer[x]
     if col.top_y >= col.bottom_y then
         return nil  -- Fully occluded
@@ -93,8 +137,8 @@ end
 ]]
 function Raycaster.is_wall_occluded(x_start, x_end)
     -- Clamp to screen bounds
-    x_start = max(0, min(Config.SCREEN_WIDTH - 1, x_start))
-    x_end = max(0, min(Config.SCREEN_WIDTH - 1, x_end))
+    x_start = max(0, min(SCREEN_WIDTH - 1, x_start))
+    x_end = max(0, min(SCREEN_WIDTH - 1, x_end))
 
     -- Check if all columns in range are occluded
     for x = x_start, x_end do
@@ -112,9 +156,9 @@ end
 ]]
 function Raycaster.get_occlusion_stats()
     local occluded = 0
-    local total = Config.SCREEN_WIDTH
+    local total = SCREEN_WIDTH
 
-    for x = 0, Config.SCREEN_WIDTH - 1 do
+    for x = 0, SCREEN_WIDTH - 1 do
         if Raycaster.is_column_occluded(x) then
             occluded = occluded + 1
         end
@@ -134,25 +178,22 @@ end
 function Raycaster.get_portal_screen_bounds(map, player, wall, sector)
     local v1 = map.vertices[wall.v1]
     local v2 = map.vertices[wall.v2]
-    local fov = Config.FOV
-    local near_plane = Config.NEAR_PLANE
+    local fov = FOV
+    local near_plane = NEAR_PLANE
     local wall_height = sector.ceiling_height - sector.floor_height
 
-    -- Transform to camera space
+    -- Transform to camera space using cached trig values
     local function to_camera_space(wx, wy, wz)
         local dx = wx - player.x
         local dy = wy - player.y
         local dz = wz - player.z
 
-        local cos_yaw = cos(player.angle)
-        local sin_yaw = sin(player.angle)
-        local rx = dx * cos_yaw - dz * sin_yaw
-        local rz = dx * sin_yaw + dz * cos_yaw
+        -- Use cached cos/sin values instead of recomputing
+        local rx = dx * camera_transform.cos_yaw - dz * camera_transform.sin_yaw
+        local rz = dx * camera_transform.sin_yaw + dz * camera_transform.cos_yaw
 
-        local cos_pitch = cos(player.pitch)
-        local sin_pitch = sin(player.pitch)
-        local ry = dy * cos_pitch - rz * sin_pitch
-        local final_z = dy * sin_pitch + rz * cos_pitch
+        local ry = dy * camera_transform.cos_pitch - rz * camera_transform.sin_pitch
+        local final_z = dy * camera_transform.sin_pitch + rz * camera_transform.cos_pitch
 
         return rx, ry, final_z
     end
@@ -187,25 +228,25 @@ function Raycaster.get_portal_screen_bounds(map, player, wall, sector)
     local inv_z1 = 1 / cz1
     local inv_z2 = 1 / cz2
 
-    local x1 = Config.SCREEN_CENTER_X + (cx1 * inv_z1 * fov)
-    local x2 = Config.SCREEN_CENTER_X + (cx2 * inv_z2 * fov)
+    local x1 = SCREEN_CENTER_X + (cx1 * inv_z1 * fov)
+    local x2 = SCREEN_CENTER_X + (cx2 * inv_z2 * fov)
 
-    local y1_bottom = Config.SCREEN_CENTER_Y - (cy1_bottom * inv_z1 * fov)
-    local y1_top = Config.SCREEN_CENTER_Y - (cy1_top * inv_z1 * fov)
-    local y2_bottom = Config.SCREEN_CENTER_Y - (cy2_bottom * inv_z2 * fov)
-    local y2_top = Config.SCREEN_CENTER_Y - (cy2_top * inv_z2 * fov)
+    local y1_bottom = SCREEN_CENTER_Y - (cy1_bottom * inv_z1 * fov)
+    local y1_top = SCREEN_CENTER_Y - (cy1_top * inv_z1 * fov)
+    local y2_bottom = SCREEN_CENTER_Y - (cy2_bottom * inv_z2 * fov)
+    local y2_top = SCREEN_CENTER_Y - (cy2_top * inv_z2 * fov)
 
     -- Calculate bounding box
-    local x_min = flr(min(x1, x2))
-    local x_max = flr(max(x1, x2))
-    local y_min = flr(min(y1_top, y2_top))
-    local y_max = flr(max(y1_bottom, y2_bottom))
+    local x_min = min(x1, x2)//1
+    local x_max = max(x1, x2)//1
+    local y_min = min(y1_top, y2_top)//1
+    local y_max = max(y1_bottom, y2_bottom)//1
 
     -- Clamp to screen bounds
-    x_min = max(0, min(Config.SCREEN_WIDTH - 1, x_min))
-    x_max = max(0, min(Config.SCREEN_WIDTH - 1, x_max))
-    y_min = max(0, min(Config.SCREEN_HEIGHT - 1, y_min))
-    y_max = max(0, min(Config.SCREEN_HEIGHT - 1, y_max))
+    x_min = max(0, min(SCREEN_WIDTH - 1, x_min))
+    x_max = max(0, min(SCREEN_WIDTH - 1, x_max))
+    y_min = max(0, min(SCREEN_HEIGHT - 1, y_min))
+    y_max = max(0, min(SCREEN_HEIGHT - 1, y_max))
 
     return x_min, x_max, y_min, y_max
 end
@@ -299,10 +340,11 @@ function Raycaster.render_portals(map, player, start_sector_idx, wall_sprite, fl
     render_walls = render_walls == nil and true or render_walls  -- Default to true
     local visited = {}  -- Track visited sectors to prevent loops
     local sectors_rendered = 0
+    local sectors_to_render = {}  -- Collect sectors with their depth for sorting
 
-    -- Recursive rendering function
+    -- PASS 1: Collect visible sectors recursively
     -- accumulated_wall_boxes: all solid wall boxes from parent sectors in the chain
-    local function render_sector(sector_idx, depth, accumulated_wall_boxes)
+    local function collect_sector(sector_idx, depth, accumulated_wall_boxes)
         accumulated_wall_boxes = accumulated_wall_boxes or {}
 
         -- Stop if too deep or already visited this sector
@@ -315,7 +357,7 @@ function Raycaster.render_portals(map, player, start_sector_idx, wall_sprite, fl
         -- to prevent flickering when crossing portals
         if depth > 1 then
             local all_occluded = true
-            for x = 0, Config.SCREEN_WIDTH - 1 do
+            for x = 0, SCREEN_WIDTH - 1 do
                 if not Raycaster.is_column_occluded(x) then
                     all_occluded = false
                     break
@@ -353,20 +395,19 @@ function Raycaster.render_portals(map, player, start_sector_idx, wall_sprite, fl
                 -- Wall faces camera (or close enough for adjacent sectors) - calculate depth
                 local depth_sq = to_camera_x * to_camera_x + to_camera_z * to_camera_z
 
+                -- OPTIMIZATION: Calculate screen bounds ONCE and cache it
+                local x_min, x_max, y_min, y_max = Raycaster.get_portal_screen_bounds(map, player, wall, sector)
+
                 if wall.portal_to then
-                    -- Portal - collect for depth sorting and recursion
-                    add(visible_walls, {wall = wall, depth = depth_sq, is_portal = true})
-                    add(visible_portals, {wall = wall, depth = depth_sq})
+                    -- Portal - collect for depth sorting and recursion (with cached bounds)
+                    add(visible_walls, {wall = wall, depth = depth_sq, is_portal = true, bounds = {x_min, x_max, y_min, y_max}})
+                    add(visible_portals, {wall = wall, depth = depth_sq, bounds = {x_min, x_max, y_min, y_max}})
                 else
-                    -- Solid wall - collect for depth sorting
-                    add(visible_walls, {wall = wall, depth = depth_sq, is_portal = false})
+                    -- Solid wall - collect for depth sorting (with cached bounds)
+                    add(visible_walls, {wall = wall, depth = depth_sq, is_portal = false, bounds = {x_min, x_max, y_min, y_max}})
                 end
             end
         end
-
-        -- Render this sector's floor and ceiling FIRST (as background)
-        Raycaster.render_sector_floor(map, player, sector, floor_sprite)
-        Raycaster.render_sector_ceiling(map, player, sector, ceiling_sprite)
 
         -- Collect solid wall bounding boxes for portal culling
         -- Start with accumulated boxes from parent sectors in the chain
@@ -376,26 +417,24 @@ function Raycaster.render_portals(map, player, start_sector_idx, wall_sprite, fl
         end
 
         -- Add this sector's solid walls to the accumulated list
+        -- OPTIMIZATION: Use cached bounds instead of recalculating
         for wall_data in all(visible_walls) do
-            if not wall_data.is_portal then
-                local wall = wall_data.wall
-                local wx_min, wx_max, wy_min, wy_max = Raycaster.get_portal_screen_bounds(map, player, wall, sector)
-                if wx_min then
-                    add(solid_wall_boxes, {
-                        x_min = wx_min,
-                        x_max = wx_max,
-                        y_min = wy_min,
-                        y_max = wy_max
-                    })
-                end
+            if not wall_data.is_portal and wall_data.bounds[1] then
+                add(solid_wall_boxes, {
+                    x_min = wall_data.bounds[1],
+                    x_max = wall_data.bounds[2],
+                    y_min = wall_data.bounds[3],
+                    y_max = wall_data.bounds[4]
+                })
             end
         end
 
         -- Sort portals by depth (BACK-TO-FRONT for Doom-style rendering)
+        -- OPTIMIZATION: Insertion sort is fine for small arrays typical in Picotron
         for i = 2, #visible_portals do
             local key = visible_portals[i]
             local j = i - 1
-            while j >= 1 and visible_portals[j].depth < key.depth do  -- Note: < instead of >
+            while j >= 1 and visible_portals[j].depth < key.depth do
                 visible_portals[j + 1] = visible_portals[j]
                 j = j - 1
             end
@@ -415,23 +454,30 @@ function Raycaster.render_portals(map, player, start_sector_idx, wall_sprite, fl
             end
         end
 
-        -- Recursively render visible portals FIRST (BACK-TO-FRONT)
-        -- This renders far sectors before near sectors (painter's algorithm)
+        -- Store this sector's data for later rendering
+        add(sectors_to_render, {
+            sector_idx = sector_idx,
+            sector = sector,
+            depth = depth,
+            visible_walls = visible_walls
+        })
+
+        -- Recursively collect visible sectors through portals
         for target_sector, portals_to_target in pairs(portals_by_sector) do
             local next_depth = depth + 1
 
-            -- ALWAYS render adjacent sectors (depth 0->1) to prevent flickering
+            -- ALWAYS collect adjacent sectors (depth 0->1) to prevent flickering
             if next_depth <= 1 then
-                -- Player's sector (depth 0) and direct neighbors (depth 1): always render (no culling)
-                render_sector(target_sector, next_depth, solid_wall_boxes)
+                -- Player's sector (depth 0) and direct neighbors (depth 1): always collect (no culling)
+                collect_sector(target_sector, next_depth, solid_wall_boxes)
             else
                 -- For deeper sectors: check if ALL portals to this sector are occluded
                 -- by walls in the entire chain (accumulated_wall_boxes from all parent sectors)
                 local any_portal_visible = false
 
                 for portal_data in all(portals_to_target) do
-                    local portal = portal_data.wall
-                    local x_min, x_max, y_min, y_max = Raycaster.get_portal_screen_bounds(map, player, portal, sector)
+                    -- OPTIMIZATION: Use cached bounds instead of recalculating
+                    local x_min, x_max, y_min, y_max = portal_data.bounds[1], portal_data.bounds[2], portal_data.bounds[3], portal_data.bounds[4]
 
                     if x_min then
                         -- Check if portal is fully occluded by occlusion buffer
@@ -465,19 +511,47 @@ function Raycaster.render_portals(map, player, start_sector_idx, wall_sprite, fl
                     end
                 end
 
-                -- Only render sector if at least one portal to it is visible
+                -- Only collect sector if at least one portal to it is visible
                 if any_portal_visible then
-                    render_sector(target_sector, next_depth, solid_wall_boxes)
+                    collect_sector(target_sector, next_depth, solid_wall_boxes)
                 end
             end
         end
+    end
+
+    -- PASS 1: Collect all visible sectors from player's sector
+    if start_sector_idx then
+        collect_sector(start_sector_idx, 0, {})
+    end
+
+    -- PASS 2: Sort sectors by depth (FARTHEST FIRST, NEAREST LAST)
+    -- Higher depth = farther from player, should render first
+    -- depth 0 = player's sector, should render LAST
+    for i = 2, #sectors_to_render do
+        local key = sectors_to_render[i]
+        local j = i - 1
+        while j >= 1 and sectors_to_render[j].depth < key.depth do
+            sectors_to_render[j + 1] = sectors_to_render[j]
+            j = j - 1
+        end
+        sectors_to_render[j + 1] = key
+    end
+
+    -- PASS 3: Render sectors in sorted order (farthest to nearest)
+    for sector_data in all(sectors_to_render) do
+        local sector = sector_data.sector
+        local visible_walls = sector_data.visible_walls
+
+        -- Render this sector's floor and ceiling FIRST (as background)
+        Raycaster.render_sector_floor(map, player, sector, floor_sprite)
+        Raycaster.render_sector_ceiling(map, player, sector, ceiling_sprite)
 
         -- Sort walls by depth (BACK-TO-FRONT)
-        -- Using insertion sort (efficient for small arrays)
+        -- OPTIMIZATION: Insertion sort is fine for small arrays typical in Picotron
         for i = 2, #visible_walls do
             local key = visible_walls[i]
             local j = i - 1
-            while j >= 1 and visible_walls[j].depth < key.depth do  -- Note: < instead of >
+            while j >= 1 and visible_walls[j].depth < key.depth do
                 visible_walls[j + 1] = visible_walls[j]
                 j = j - 1
             end
@@ -485,14 +559,14 @@ function Raycaster.render_portals(map, player, start_sector_idx, wall_sprite, fl
         end
 
         -- Render solid walls LAST (BACK-TO-FRONT order)
-        -- This ensures near walls overdraw far walls
+        -- This ensures walls overdraw floors (walls always in front)
         if render_walls then
             for wall_data in all(visible_walls) do
                 if not wall_data.is_portal then
                     local wall = wall_data.wall
 
-                    -- Calculate wall's screen-space bounding box for occlusion test
-                    local x_min, x_max, y_min, y_max = Raycaster.get_portal_screen_bounds(map, player, wall, sector)
+                    -- OPTIMIZATION: Use cached bounds instead of recalculating
+                    local x_min, x_max, y_min, y_max = wall_data.bounds[1], wall_data.bounds[2], wall_data.bounds[3], wall_data.bounds[4]
 
                     -- Only render if wall has at least some visible pixels (not fully occluded)
                     if x_min and not Raycaster.is_portal_occluded(x_min, x_max, y_min, y_max) then
@@ -501,11 +575,6 @@ function Raycaster.render_portals(map, player, start_sector_idx, wall_sprite, fl
                 end
             end
         end
-    end
-
-    -- Start rendering from player's sector with empty accumulated wall boxes
-    if start_sector_idx then
-        render_sector(start_sector_idx, 0, {})
     end
 
     -- Copy visited sectors to output table if provided
@@ -524,10 +593,10 @@ end
 function Raycaster.render_sector_floor(map, player, sector, floor_sprite)
     -- Use existing floor rendering but only for this sector's face
     local face = sector.floor_face
-    local texture_size = Config.TEXTURE_SIZE
-    local uv_scale = Config.UV_SCALE
-    local fov = Config.FOV
-    local near_plane = Config.NEAR_PLANE
+    local texture_size = TEXTURE_SIZE
+    local uv_scale = UV_SCALE
+    local fov = FOV
+    local near_plane = NEAR_PLANE
 
     -- Get vertices for this face (use actual Y from OBJ file)
     local face_verts = {}
@@ -536,12 +605,7 @@ function Raycaster.render_sector_floor(map, player, sector, floor_sprite)
         add(face_verts, {x = v.x, y = v.y, z = v.z})
     end
 
-    -- Precompute camera transform
-    local cos_yaw = cos(player.angle)
-    local sin_yaw = sin(player.angle)
-    local cos_pitch = cos(player.pitch)
-    local sin_pitch = sin(player.pitch)
-
+    -- Use cached camera transform (no recomputation needed)
     -- Transform vertices to camera space
     local camera_space = {}
     for v in all(face_verts) do
@@ -549,10 +613,10 @@ function Raycaster.render_sector_floor(map, player, sector, floor_sprite)
         local wy = v.y - player.y
         local wz = v.z - player.z
 
-        local cx = wx * cos_yaw - wz * sin_yaw
-        local cz = wx * sin_yaw + wz * cos_yaw
-        local cy = wy * cos_pitch - cz * sin_pitch
-        local final_z = wy * sin_pitch + cz * cos_pitch
+        local cx = wx * camera_transform.cos_yaw - wz * camera_transform.sin_yaw
+        local cz = wx * camera_transform.sin_yaw + wz * camera_transform.cos_yaw
+        local cy = wy * camera_transform.cos_pitch - cz * camera_transform.sin_pitch
+        local final_z = wy * camera_transform.sin_pitch + cz * camera_transform.cos_pitch
 
         local u = v.x * uv_scale * texture_size
         local v_coord = v.z * uv_scale * texture_size
@@ -571,8 +635,8 @@ function Raycaster.render_sector_floor(map, player, sector, floor_sprite)
 
         if not (v0.z < near_plane) then
             local inv_z = 1 / v0.z
-            local screen_x = Config.SCREEN_CENTER_X + (v0.x * inv_z * fov)
-            local screen_y = Config.SCREEN_CENTER_Y - (v0.y * inv_z * fov)
+            local screen_x = SCREEN_CENTER_X + (v0.x * inv_z * fov)
+            local screen_y = SCREEN_CENTER_Y - (v0.y * inv_z * fov)
             add(projected, {
                 x = screen_x, y = screen_y, z = v0.z,
                 w = inv_z, u = v0.u, v = v0.v
@@ -588,8 +652,8 @@ function Raycaster.render_sector_floor(map, player, sector, floor_sprite)
             local clipped_v = v0.v + (v1.v - v0.v) * t
 
             local inv_z = 1 / clipped_z
-            local screen_x = Config.SCREEN_CENTER_X + (clipped_x * inv_z * fov)
-            local screen_y = Config.SCREEN_CENTER_Y - (clipped_y * inv_z * fov)
+            local screen_x = SCREEN_CENTER_X + (clipped_x * inv_z * fov)
+            local screen_y = SCREEN_CENTER_Y - (clipped_y * inv_z * fov)
             add(projected, {
                 x = screen_x, y = screen_y, z = clipped_z,
                 w = inv_z, u = clipped_u, v = clipped_v
@@ -604,22 +668,22 @@ function Raycaster.render_sector_floor(map, player, sector, floor_sprite)
     local cross = (v1.x - v0.x) * (v2.y - v0.y) - (v1.y - v0.y) * (v2.x - v0.x)
     if cross <= 0 then return end
 
-    -- Render as triangle fan (reuse existing helper)
+    -- OPTIMIZATION: Use pre-allocated triangle buffer (no allocations!)
     local render_textured_triangle = Raycaster.render_textured_triangle
     for i = 2, #projected - 1 do
         local p0, p1, p2 = projected[1], projected[i], projected[i + 1]
-        local tri_data = userdata("f64", 6, 3)
 
-        tri_data[0], tri_data[1], tri_data[2] = p0.x, p0.y, 0
-        tri_data[3], tri_data[4], tri_data[5] = p0.w, p0.u * p0.w, p0.v * p0.w
+        -- Reuse pre-allocated buffer instead of creating new userdata
+        triangle_buffer[0], triangle_buffer[1], triangle_buffer[2] = p0.x, p0.y, 0
+        triangle_buffer[3], triangle_buffer[4], triangle_buffer[5] = p0.w, p0.u * p0.w, p0.v * p0.w
 
-        tri_data[6], tri_data[7], tri_data[8] = p1.x, p1.y, 0
-        tri_data[9], tri_data[10], tri_data[11] = p1.w, p1.u * p1.w, p1.v * p1.w
+        triangle_buffer[6], triangle_buffer[7], triangle_buffer[8] = p1.x, p1.y, 0
+        triangle_buffer[9], triangle_buffer[10], triangle_buffer[11] = p1.w, p1.u * p1.w, p1.v * p1.w
 
-        tri_data[12], tri_data[13], tri_data[14] = p2.x, p2.y, 0
-        tri_data[15], tri_data[16], tri_data[17] = p2.w, p2.u * p2.w, p2.v * p2.w
+        triangle_buffer[12], triangle_buffer[13], triangle_buffer[14] = p2.x, p2.y, 0
+        triangle_buffer[15], triangle_buffer[16], triangle_buffer[17] = p2.w, p2.u * p2.w, p2.v * p2.w
 
-        render_textured_triangle(floor_sprite, tri_data)
+        render_textured_triangle(floor_sprite, triangle_buffer)
     end
 end
 
@@ -629,10 +693,10 @@ end
 function Raycaster.render_sector_ceiling(map, player, sector, ceiling_sprite)
     -- Use existing ceiling rendering but only for this sector's face
     local face = sector.floor_face
-    local texture_size = Config.TEXTURE_SIZE
-    local uv_scale = Config.UV_SCALE
-    local fov = Config.FOV
-    local near_plane = Config.NEAR_PLANE
+    local texture_size = TEXTURE_SIZE
+    local uv_scale = UV_SCALE
+    local fov = FOV
+    local near_plane = NEAR_PLANE
 
     -- Get vertices for this face at ceiling height
     local face_verts = {}
@@ -642,12 +706,7 @@ function Raycaster.render_sector_ceiling(map, player, sector, ceiling_sprite)
         add(face_verts, {x = v.x, y = v.y + sector.ceiling_height, z = v.z})
     end
 
-    -- Precompute camera transform
-    local cos_yaw = cos(player.angle)
-    local sin_yaw = sin(player.angle)
-    local cos_pitch = cos(player.pitch)
-    local sin_pitch = sin(player.pitch)
-
+    -- Use cached camera transform (no recomputation needed)
     -- Transform vertices to camera space
     local camera_space = {}
     for v in all(face_verts) do
@@ -655,10 +714,10 @@ function Raycaster.render_sector_ceiling(map, player, sector, ceiling_sprite)
         local wy = v.y - player.y
         local wz = v.z - player.z
 
-        local cx = wx * cos_yaw - wz * sin_yaw
-        local cz = wx * sin_yaw + wz * cos_yaw
-        local cy = wy * cos_pitch - cz * sin_pitch
-        local final_z = wy * sin_pitch + cz * cos_pitch
+        local cx = wx * camera_transform.cos_yaw - wz * camera_transform.sin_yaw
+        local cz = wx * camera_transform.sin_yaw + wz * camera_transform.cos_yaw
+        local cy = wy * camera_transform.cos_pitch - cz * camera_transform.sin_pitch
+        local final_z = wy * camera_transform.sin_pitch + cz * camera_transform.cos_pitch
 
         local u = v.x * uv_scale * texture_size
         local v_coord = v.z * uv_scale * texture_size
@@ -677,8 +736,8 @@ function Raycaster.render_sector_ceiling(map, player, sector, ceiling_sprite)
 
         if not (v0.z < near_plane) then
             local inv_z = 1 / v0.z
-            local screen_x = Config.SCREEN_CENTER_X + (v0.x * inv_z * fov)
-            local screen_y = Config.SCREEN_CENTER_Y - (v0.y * inv_z * fov)
+            local screen_x = SCREEN_CENTER_X + (v0.x * inv_z * fov)
+            local screen_y = SCREEN_CENTER_Y - (v0.y * inv_z * fov)
             add(projected, {
                 x = screen_x, y = screen_y, z = v0.z,
                 w = inv_z, u = v0.u, v = v0.v
@@ -694,8 +753,8 @@ function Raycaster.render_sector_ceiling(map, player, sector, ceiling_sprite)
             local clipped_v = v0.v + (v1.v - v0.v) * t
 
             local inv_z = 1 / clipped_z
-            local screen_x = Config.SCREEN_CENTER_X + (clipped_x * inv_z * fov)
-            local screen_y = Config.SCREEN_CENTER_Y - (clipped_y * inv_z * fov)
+            local screen_x = SCREEN_CENTER_X + (clipped_x * inv_z * fov)
+            local screen_y = SCREEN_CENTER_Y - (clipped_y * inv_z * fov)
             add(projected, {
                 x = screen_x, y = screen_y, z = clipped_z,
                 w = inv_z, u = clipped_u, v = clipped_v
@@ -710,22 +769,22 @@ function Raycaster.render_sector_ceiling(map, player, sector, ceiling_sprite)
     local cross = (v1.x - v0.x) * (v2.y - v0.y) - (v1.y - v0.y) * (v2.x - v0.x)
     if cross >= 0 then return end  -- Note: >= instead of <= (inverted)
 
-    -- Render as triangle fan (reuse existing helper)
+    -- OPTIMIZATION: Use pre-allocated triangle buffer (no allocations!)
     local render_textured_triangle = Raycaster.render_textured_triangle
     for i = 2, #projected - 1 do
         local p0, p1, p2 = projected[1], projected[i], projected[i + 1]
-        local tri_data = userdata("f64", 6, 3)
 
-        tri_data[0], tri_data[1], tri_data[2] = p0.x, p0.y, 0
-        tri_data[3], tri_data[4], tri_data[5] = p0.w, p0.u * p0.w, p0.v * p0.w
+        -- Reuse pre-allocated buffer instead of creating new userdata
+        triangle_buffer[0], triangle_buffer[1], triangle_buffer[2] = p0.x, p0.y, 0
+        triangle_buffer[3], triangle_buffer[4], triangle_buffer[5] = p0.w, p0.u * p0.w, p0.v * p0.w
 
-        tri_data[6], tri_data[7], tri_data[8] = p1.x, p1.y, 0
-        tri_data[9], tri_data[10], tri_data[11] = p1.w, p1.u * p1.w, p1.v * p1.w
+        triangle_buffer[6], triangle_buffer[7], triangle_buffer[8] = p1.x, p1.y, 0
+        triangle_buffer[9], triangle_buffer[10], triangle_buffer[11] = p1.w, p1.u * p1.w, p1.v * p1.w
 
-        tri_data[12], tri_data[13], tri_data[14] = p2.x, p2.y, 0
-        tri_data[15], tri_data[16], tri_data[17] = p2.w, p2.u * p2.w, p2.v * p2.w
+        triangle_buffer[12], triangle_buffer[13], triangle_buffer[14] = p2.x, p2.y, 0
+        triangle_buffer[15], triangle_buffer[16], triangle_buffer[17] = p2.w, p2.u * p2.w, p2.v * p2.w
 
-        render_textured_triangle(ceiling_sprite, tri_data)
+        render_textured_triangle(ceiling_sprite, triangle_buffer)
     end
 end
 
@@ -761,8 +820,8 @@ local function clip_wall_quad(player, v1, v2, wall_height, fov, near_plane)
         if cz < near_plane then
             return nil
         end
-        local screen_x = Config.SCREEN_CENTER_X + (cx / cz) * fov
-        local screen_y = Config.SCREEN_CENTER_Y - (cy / cz) * fov
+        local screen_x = SCREEN_CENTER_X + (cx / cz) * fov
+        local screen_y = SCREEN_CENTER_Y - (cy / cz) * fov
         return {x = screen_x, y = screen_y, z = cz}
     end
 
@@ -827,9 +886,9 @@ function Raycaster.render_wall_segment(map, player, wall, sector, wall_sprite)
     local v1 = map.vertices[wall.v1]
     local v2 = map.vertices[wall.v2]
 
-    local fov = Config.FOV
-    local near_plane = Config.NEAR_PLANE
-    local texture_size = Config.TEXTURE_SIZE
+    local fov = FOV
+    local near_plane = NEAR_PLANE
+    local texture_size = TEXTURE_SIZE
 
     -- Use sector's ceiling height as wall height
     local wall_height = sector.ceiling_height - sector.floor_height
@@ -847,12 +906,12 @@ function Raycaster.render_wall_segment(map, player, wall, sector, wall_sprite)
         local u_end_clip = quad.u_end
 
         -- Find screen X range
-        local x_start = flr(min(bottom1.x, bottom2.x))
-        local x_end = flr(max(bottom1.x, bottom2.x))
+        local x_start = min(bottom1.x, bottom2.x)//1
+        local x_end = max(bottom1.x, bottom2.x)//1
 
         -- Clamp to screen bounds
         x_start = max(0, x_start)
-        x_end = min(Config.SCREEN_WIDTH - 1, x_end)
+        x_end = min(SCREEN_WIDTH - 1, x_end)
 
         -- Pre-calculate 1/z values for perspective-correct interpolation
         local inv_z1 = 1 / bottom1.z
@@ -862,6 +921,14 @@ function Raycaster.render_wall_segment(map, player, wall, sector, wall_sprite)
         local u_over_z1 = u_start_clip * inv_z1
         local u_over_z2 = u_end_clip * inv_z2
 
+        -- OPTIMIZATION: Pre-calculate deltas (constant across loop, computed once)
+        local dx = bottom2.x - bottom1.x
+        local d_inv_z = inv_z2 - inv_z1
+        local d_u_over_z = u_over_z2 - u_over_z1
+        local dy_top = top2.y - top1.y
+        local dy_bottom = bottom2.y - bottom1.y
+        local inv_dx = dx ~= 0 and 1 / dx or 0
+
         -- Draw vertical columns across the wall
         for x = x_start, x_end do
             -- Occlusion culling: skip fully occluded columns
@@ -869,27 +936,21 @@ function Raycaster.render_wall_segment(map, player, wall, sector, wall_sprite)
                 goto skip_column
             end
 
-            -- Calculate interpolation factor (0 to 1) across wall segment
-            local t
-            if bottom2.x ~= bottom1.x then
-                t = (x - bottom1.x) / (bottom2.x - bottom1.x)
-            else
-                t = 0
-            end
-            t = mid(0, t, 1)
+            -- OPTIMIZATION: Calculate interpolation factor using pre-computed inverse
+            local t = mid(0, (x - bottom1.x) * inv_dx, 1)
 
             -- Interpolate 1/z linearly in screen space (perspective-correct)
-            local inv_z = inv_z1 + (inv_z2 - inv_z1) * t
+            local inv_z = inv_z1 + d_inv_z * t
             local z = 1 / inv_z
             local w = inv_z
 
             -- Interpolate u/z linearly, then divide by z to get perspective-correct u
-            local u_over_z = u_over_z1 + (u_over_z2 - u_over_z1) * t
+            local u_over_z = u_over_z1 + d_u_over_z * t
             local u_t = u_over_z / inv_z
 
             -- Interpolate Y coordinates (top and bottom of wall)
-            local y_top = top1.y + (top2.y - top1.y) * t
-            local y_bottom = bottom1.y + (bottom2.y - bottom1.y) * t
+            local y_top = top1.y + dy_top * t
+            local y_bottom = bottom1.y + dy_bottom * t
 
             -- Calculate texture U coordinate
             local u = u_t * texture_size
@@ -901,38 +962,37 @@ function Raycaster.render_wall_segment(map, player, wall, sector, wall_sprite)
             -- If wall top extends above screen (y_top < 0), find correct V
             if y_top < 0 then
                 local screen_y_target = 0
-                local y_cam_direction = (screen_y_target - Config.SCREEN_CENTER_Y) / fov
+                local y_cam_direction = (screen_y_target - SCREEN_CENTER_Y) / fov
                 local world_y_at_edge = player.y - y_cam_direction * z
                 v_top = (wall_height - world_y_at_edge) / wall_height * texture_size
                 y_top = 0
             end
 
             -- If wall bottom extends below screen (y_bottom > screen height), find correct V
-            if y_bottom > Config.SCREEN_HEIGHT - 1 then
-                local screen_y_target = Config.SCREEN_HEIGHT - 1
-                local y_cam_direction = (screen_y_target - Config.SCREEN_CENTER_Y) / fov
+            if y_bottom > SCREEN_HEIGHT - 1 then
+                local screen_y_target = SCREEN_HEIGHT - 1
+                local y_cam_direction = (screen_y_target - SCREEN_CENTER_Y) / fov
                 local world_y_at_edge = player.y - y_cam_direction * z
                 v_bottom = (wall_height - world_y_at_edge) / wall_height * texture_size
-                y_bottom = Config.SCREEN_HEIGHT - 1
+                y_bottom = SCREEN_HEIGHT - 1
             end
 
             -- Draw the column immediately (no batching for portal rendering)
-            if y_bottom > y_top and y_top < Config.SCREEN_HEIGHT and y_bottom > 0 then
-                -- Create a single column for tline3d
-                local col_data = userdata("f64", 11, 1)
-                col_data[0] = wall_sprite
-                col_data[1] = x
-                col_data[2] = y_top
-                col_data[3] = x
-                col_data[4] = y_bottom
-                col_data[5] = u * w
-                col_data[6] = v_top * w
-                col_data[7] = u * w
-                col_data[8] = v_bottom * w
-                col_data[9] = w
-                col_data[10] = w
+            if y_bottom > y_top and y_top < SCREEN_HEIGHT and y_bottom > 0 then
+                -- OPTIMIZATION: Reuse pre-allocated column buffer (no allocations!)
+                column_buffer[0] = wall_sprite
+                column_buffer[1] = x
+                column_buffer[2] = y_top
+                column_buffer[3] = x
+                column_buffer[4] = y_bottom
+                column_buffer[5] = u * w
+                column_buffer[6] = v_top * w
+                column_buffer[7] = u * w
+                column_buffer[8] = v_bottom * w
+                column_buffer[9] = w
+                column_buffer[10] = w
 
-                tline3d(col_data, 0, 1)
+                tline3d(column_buffer, 0, 1)
 
                 -- Mark this column as filled by the wall (for occlusion)
                 Raycaster.mark_column_filled(x, y_top, y_bottom)
@@ -967,8 +1027,8 @@ function Raycaster.render_walls(map, player, wall_sprite, fog_start, fog_end)
     Raycaster.columns_drawn = 0  -- Reset counter
     wall_column_count = 0  -- Reset batch counter
 
-    local fov = Config.FOV
-    local near_plane = Config.NEAR_PLANE
+    local fov = FOV
+    local near_plane = NEAR_PLANE
 
     -- Fog parameters (default values if not provided)
     fog_start = fog_start or 10
@@ -1017,12 +1077,12 @@ function Raycaster.render_walls(map, player, wall_sprite, fog_start, fog_end)
             -- Each wall segment is exactly 1 texture unit (16x16 pixels)
             -- U goes from 0 to 16 across the width of the segment
             -- V goes from 0 to 16 across the height of the segment
-            local texture_size = Config.TEXTURE_SIZE
+            local texture_size = TEXTURE_SIZE
 
             -- Find screen X range (left to right)
             -- Use floor for start and ceil for end to ensure we cover all pixels
-            local x_start = flr(min(bottom1.x, bottom2.x))
-            local x_end = flr(max(bottom1.x, bottom2.x))
+            local x_start = min(bottom1.x, bottom2.x)//1
+            local x_end = max(bottom1.x, bottom2.x)//1
 
             -- Clamp to screen bounds
             x_start = max(0, x_start)
@@ -1087,7 +1147,7 @@ function Raycaster.render_walls(map, player, wall_sprite, fog_start, fog_end)
                         -- Ray direction in camera space: (x_cam, y_cam, z_cam)
                         -- Screen y=0 corresponds to y_cam = (0 - screen_center_y) * (z / fov)
                         local screen_y_target = 0
-                        local y_cam_direction = (screen_y_target - Config.SCREEN_CENTER_Y) / fov
+                        local y_cam_direction = (screen_y_target - SCREEN_CENTER_Y) / fov
 
                         -- Find where this ray intersects the wall plane at depth z
                         -- World Y at screen edge = player.y - y_cam_direction * z
@@ -1103,7 +1163,7 @@ function Raycaster.render_walls(map, player, wall_sprite, fog_start, fog_end)
                     if y_bottom > 269 then
                         -- Cast ray from camera through bottom edge of screen (y=269)
                         local screen_y_target = 269
-                        local y_cam_direction = (screen_y_target - Config.SCREEN_CENTER_Y) / fov
+                        local y_cam_direction = (screen_y_target - SCREEN_CENTER_Y) / fov
 
                         -- World Y at screen edge
                         local world_y_at_edge = player.y - y_cam_direction * z
@@ -1115,7 +1175,7 @@ function Raycaster.render_walls(map, player, wall_sprite, fog_start, fog_end)
 
                     -- Add vertical column to batch buffer
                     -- Both U and V need to be multiplied by w for perspective correction
-                    if y_bottom > y_top and y_top < Config.SCREEN_HEIGHT and y_bottom > 0 then
+                    if y_bottom > y_top and y_top < SCREEN_HEIGHT and y_bottom > 0 then
                         Raycaster.columns_drawn = Raycaster.columns_drawn + 1
 
                         -- Add to batch buffer
@@ -1171,9 +1231,9 @@ end
   @param y_end: ending screen y coordinate
 ]]
 local function raycast_plane(player, sprite, plane_height, uv_scale, texture_size, y_start, y_end)
-    local fov = Config.FOV
-    local screen_center_x = Config.SCREEN_CENTER_X
-    local screen_center_y = Config.SCREEN_CENTER_Y
+    local fov = FOV
+    local screen_center_x = SCREEN_CENTER_X
+    local screen_center_y = SCREEN_CENTER_Y
 
     local cos_yaw = cos(player.angle)
     local sin_yaw = sin(player.angle)
@@ -1267,9 +1327,9 @@ local function clip_polygon_near_plane(verts, near_plane)
             local clipped_cam_z = v0.cam_z + (v1.cam_z - v0.cam_z) * t
 
             -- Re-project clipped vertex
-            local fov = Config.FOV
-            local screen_x = Config.SCREEN_CENTER_X + (clipped_x / clipped_z) * fov
-            local screen_y = Config.SCREEN_CENTER_Y - (clipped_y / clipped_z) * fov
+            local fov = FOV
+            local screen_x = SCREEN_CENTER_X + (clipped_x / clipped_z) * fov
+            local screen_y = SCREEN_CENTER_Y - (clipped_y / clipped_z) * fov
             local w = 1 / clipped_z
 
             add(result, {
@@ -1318,10 +1378,10 @@ function Raycaster.render_textured_triangle(sprite, vert_data)
             w2, (w3 - w1) * t + w1
         )
 
-    local screen_height = Config.SCREEN_HEIGHT
-    local start_y = y1 < -1 and -1 or flr(y1)
-    local mid_y = y2 < -1 and -1 or y2 > screen_height - 1 and screen_height - 1 or flr(y2)
-    local stop_y = (y3 <= screen_height - 1 and flr(y3) or screen_height - 1)
+    local screen_height = SCREEN_HEIGHT
+    local start_y = y1 < -1 and -1 or y1//1
+    local mid_y = y2 < -1 and -1 or y2 > screen_height - 1 and screen_height - 1 or y2//1
+    local stop_y = (y3 <= screen_height - 1 and y3//1 or screen_height - 1)
 
     -- Top half
     local dy = mid_y - start_y
@@ -1358,10 +1418,10 @@ local render_textured_triangle = Raycaster.render_textured_triangle
 function Raycaster.render_floors(map, player, floor_sprite, fog_start, fog_end)
     Raycaster.floor_spans_drawn = 0  -- Reset counter
 
-    local texture_size = Config.TEXTURE_SIZE
-    local uv_scale = Config.UV_SCALE
-    local fov = Config.FOV
-    local near_plane = Config.NEAR_PLANE
+    local texture_size = TEXTURE_SIZE
+    local uv_scale = UV_SCALE
+    local fov = FOV
+    local near_plane = NEAR_PLANE
 
     -- Precompute camera transform
     local cos_yaw = cos(player.angle)
@@ -1437,8 +1497,8 @@ function Raycaster.render_floors(map, player, floor_sprite, fog_start, fog_end)
             -- Vertex in front - add it
             if not behind0 then
                 local inv_z = 1 / v0.z
-                local screen_x = Config.SCREEN_CENTER_X + (v0.x * inv_z * fov)
-                local screen_y = Config.SCREEN_CENTER_Y - (v0.y * inv_z * fov)
+                local screen_x = SCREEN_CENTER_X + (v0.x * inv_z * fov)
+                local screen_y = SCREEN_CENTER_Y - (v0.y * inv_z * fov)
 
                 add(projected, {
                     x = screen_x,
@@ -1461,8 +1521,8 @@ function Raycaster.render_floors(map, player, floor_sprite, fog_start, fog_end)
 
                 -- Project clipped vertex
                 local inv_z = 1 / clipped_z
-                local screen_x = Config.SCREEN_CENTER_X + (clipped_x * inv_z * fov)
-                local screen_y = Config.SCREEN_CENTER_Y - (clipped_y * inv_z * fov)
+                local screen_x = SCREEN_CENTER_X + (clipped_x * inv_z * fov)
+                local screen_y = SCREEN_CENTER_Y - (clipped_y * inv_z * fov)
 
                 add(projected, {
                     x = screen_x,
@@ -1494,36 +1554,35 @@ function Raycaster.render_floors(map, player, floor_sprite, fog_start, fog_end)
             local p1 = projected[i]
             local p2 = projected[i + 1]
 
-            -- Create userdata for triangle vertices (x, y, z, w, u, v)
+            -- OPTIMIZATION: Reuse pre-allocated buffer (no allocations!)
             -- Format: 6 values per vertex, 3 vertices = 18 values
-            local tri_data = userdata("f64", 6, 3)
 
             -- Vertex 0
-            tri_data[0] = p0.x
-            tri_data[1] = p0.y
-            tri_data[2] = 0  -- z (screen space, always 0)
-            tri_data[3] = p0.w
-            tri_data[4] = p0.u * p0.w
-            tri_data[5] = p0.v * p0.w
+            triangle_buffer[0] = p0.x
+            triangle_buffer[1] = p0.y
+            triangle_buffer[2] = 0  -- z (screen space, always 0)
+            triangle_buffer[3] = p0.w
+            triangle_buffer[4] = p0.u * p0.w
+            triangle_buffer[5] = p0.v * p0.w
 
             -- Vertex 1
-            tri_data[6] = p1.x
-            tri_data[7] = p1.y
-            tri_data[8] = 0
-            tri_data[9] = p1.w
-            tri_data[10] = p1.u * p1.w
-            tri_data[11] = p1.v * p1.w
+            triangle_buffer[6] = p1.x
+            triangle_buffer[7] = p1.y
+            triangle_buffer[8] = 0
+            triangle_buffer[9] = p1.w
+            triangle_buffer[10] = p1.u * p1.w
+            triangle_buffer[11] = p1.v * p1.w
 
             -- Vertex 2
-            tri_data[12] = p2.x
-            tri_data[13] = p2.y
-            tri_data[14] = 0
-            tri_data[15] = p2.w
-            tri_data[16] = p2.u * p2.w
-            tri_data[17] = p2.v * p2.w
+            triangle_buffer[12] = p2.x
+            triangle_buffer[13] = p2.y
+            triangle_buffer[14] = 0
+            triangle_buffer[15] = p2.w
+            triangle_buffer[16] = p2.u * p2.w
+            triangle_buffer[17] = p2.v * p2.w
 
             -- Render triangle using textri helper
-            render_textured_triangle(floor_sprite, tri_data)
+            render_textured_triangle(floor_sprite, triangle_buffer)
         end
 
         Raycaster.floor_spans_drawn = Raycaster.floor_spans_drawn + 1
@@ -1545,10 +1604,10 @@ end
 function Raycaster.render_ceilings(map, player, ceiling_sprite, fog_start, fog_end)
     Raycaster.ceiling_spans_drawn = 0  -- Reset counter
 
-    local texture_size = Config.TEXTURE_SIZE
-    local uv_scale = Config.UV_SCALE
-    local fov = Config.FOV
-    local near_plane = Config.NEAR_PLANE
+    local texture_size = TEXTURE_SIZE
+    local uv_scale = UV_SCALE
+    local fov = FOV
+    local near_plane = NEAR_PLANE
 
     -- Precompute camera transform
     local cos_yaw = cos(player.angle)
@@ -1625,8 +1684,8 @@ function Raycaster.render_ceilings(map, player, ceiling_sprite, fog_start, fog_e
             -- Vertex in front - add it
             if not behind0 then
                 local inv_z = 1 / v0.z
-                local screen_x = Config.SCREEN_CENTER_X + (v0.x * inv_z * fov)
-                local screen_y = Config.SCREEN_CENTER_Y - (v0.y * inv_z * fov)
+                local screen_x = SCREEN_CENTER_X + (v0.x * inv_z * fov)
+                local screen_y = SCREEN_CENTER_Y - (v0.y * inv_z * fov)
 
                 add(projected, {
                     x = screen_x,
@@ -1649,8 +1708,8 @@ function Raycaster.render_ceilings(map, player, ceiling_sprite, fog_start, fog_e
 
                 -- Project clipped vertex
                 local inv_z = 1 / clipped_z
-                local screen_x = Config.SCREEN_CENTER_X + (clipped_x * inv_z * fov)
-                local screen_y = Config.SCREEN_CENTER_Y - (clipped_y * inv_z * fov)
+                local screen_x = SCREEN_CENTER_X + (clipped_x * inv_z * fov)
+                local screen_y = SCREEN_CENTER_Y - (clipped_y * inv_z * fov)
 
                 add(projected, {
                     x = screen_x,
@@ -1682,35 +1741,34 @@ function Raycaster.render_ceilings(map, player, ceiling_sprite, fog_start, fog_e
             local p1 = projected[i]
             local p2 = projected[i + 1]
 
-            -- Create userdata for triangle vertices
-            local tri_data = userdata("f64", 6, 3)
+            -- OPTIMIZATION: Reuse pre-allocated buffer (no allocations!)
 
             -- Vertex 0
-            tri_data[0] = p0.x
-            tri_data[1] = p0.y
-            tri_data[2] = 0
-            tri_data[3] = p0.w
-            tri_data[4] = p0.u * p0.w
-            tri_data[5] = p0.v * p0.w
+            triangle_buffer[0] = p0.x
+            triangle_buffer[1] = p0.y
+            triangle_buffer[2] = 0
+            triangle_buffer[3] = p0.w
+            triangle_buffer[4] = p0.u * p0.w
+            triangle_buffer[5] = p0.v * p0.w
 
             -- Vertex 1
-            tri_data[6] = p1.x
-            tri_data[7] = p1.y
-            tri_data[8] = 0
-            tri_data[9] = p1.w
-            tri_data[10] = p1.u * p1.w
-            tri_data[11] = p1.v * p1.w
+            triangle_buffer[6] = p1.x
+            triangle_buffer[7] = p1.y
+            triangle_buffer[8] = 0
+            triangle_buffer[9] = p1.w
+            triangle_buffer[10] = p1.u * p1.w
+            triangle_buffer[11] = p1.v * p1.w
 
             -- Vertex 2
-            tri_data[12] = p2.x
-            tri_data[13] = p2.y
-            tri_data[14] = 0
-            tri_data[15] = p2.w
-            tri_data[16] = p2.u * p2.w
-            tri_data[17] = p2.v * p2.w
+            triangle_buffer[12] = p2.x
+            triangle_buffer[13] = p2.y
+            triangle_buffer[14] = 0
+            triangle_buffer[15] = p2.w
+            triangle_buffer[16] = p2.u * p2.w
+            triangle_buffer[17] = p2.v * p2.w
 
             -- Render triangle
-            render_textured_triangle(ceiling_sprite, tri_data)
+            render_textured_triangle(ceiling_sprite, triangle_buffer)
         end
 
         Raycaster.ceiling_spans_drawn = Raycaster.ceiling_spans_drawn + 1

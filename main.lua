@@ -468,13 +468,13 @@ local function find_player_sector_stable(x, z)
                     -- Calculate distance to this edge
                     local edge_dx = v2.x - v1.x
                     local edge_dz = v2.z - v1.z
-                    local edge_len = sqrt(edge_dx * edge_dx + edge_dz * edge_dz)
+                    local edge_len = math.sqrt(edge_dx * edge_dx + edge_dz * edge_dz)
                     if edge_len > 0 then
                         local t = ((x - v1.x) * edge_dx + (z - v1.z) * edge_dz) / (edge_len * edge_len)
                         t = max(0, min(1, t))
                         local closest_x = v1.x + t * edge_dx
                         local closest_z = v1.z + t * edge_dz
-                        local dist = sqrt((x - closest_x) * (x - closest_x) + (z - closest_z) * (z - closest_z))
+                        local dist = math.sqrt((x - closest_x) * (x - closest_x) + (z - closest_z) * (z - closest_z))
                         min_dist_to_neighbor = min(min_dist_to_neighbor, dist)
                     end
                 end
@@ -743,7 +743,7 @@ function line_circle_collision(x1, y1, x2, y2, cx, cy, radius)
     local len_sq = lx * lx + ly * ly
     if len_sq == 0 then
         -- Degenerate line
-        return sqrt(dx * dx + dy * dy) < radius
+        return math.sqrt(dx * dx + dy * dy) < radius
     end
 
     local t = (dx * lx + dy * ly) / len_sq
@@ -756,7 +756,7 @@ function line_circle_collision(x1, y1, x2, y2, cx, cy, radius)
     -- Distance to closest point
     local dist_x = cx - closest_x
     local dist_y = cy - closest_y
-    local dist = sqrt(dist_x * dist_x + dist_y * dist_y)
+    local dist = math.sqrt(dist_x * dist_x + dist_y * dist_y)
 
     return dist < radius
 end
@@ -767,6 +767,9 @@ end
 ]]
 function _draw()
     cls(1)  -- clear to dark blue
+
+    -- Update camera transform cache (ONCE per frame for massive speedup)
+    Raycaster.update_camera_transform(player)
 
     -- Initialize occlusion buffer for this frame
     Raycaster.init_occlusion_buffer()
@@ -900,7 +903,7 @@ function collect_wall_triangles(triangles)
         -- Skip if behind camera
         if bottom1 and top1 and bottom2 and top2 then
             -- Calculate wall length for texture scaling
-            local wall_len = sqrt((v2.x - v1.x)^2 + (v2.z - v1.z)^2)
+            local wall_len = math.sqrt((v2.x - v1.x)^2 + (v2.z - v1.z)^2)
             local u_scale = wall_len * 4  -- texture repeat
 
             -- Triangle 1: bottom-left, top-left, bottom-right
@@ -1100,8 +1103,8 @@ function draw_hud()
     local occluded, total, pct = Raycaster.get_occlusion_stats()
     print("occluded: " .. occluded .. "/" .. total, 2, 26, 0)
     print("occluded: " .. occluded .. "/" .. total, 2, 26)
-    print("occlusion: " .. flr(pct) .. "%", 2, 34, 0)
-    print("occlusion: " .. flr(pct) .. "%", 2, 34)
+    print("occlusion: " .. pct//1 .. "%", 2, 34, 0)
+    print("occlusion: " .. pct//1 .. "%", 2, 34)
 
     -- Rendering mode
     local render_mode = use_portal_rendering and "portal" or "classic"
