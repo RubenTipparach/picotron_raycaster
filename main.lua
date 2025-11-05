@@ -76,6 +76,7 @@ local last_mouse_y = 0
 
 -- Debug options
 local show_wireframe = false
+local show_walls = true
 
 -- Performance tracking
 local frame_cpu = 0
@@ -414,6 +415,11 @@ function update_movement(dt)
     if keyp("t") then
         show_wireframe = not show_wireframe
     end
+
+    -- Toggle walls (1)
+    if keyp("1") then
+        show_walls = not show_walls
+    end
 end
 
 --[[
@@ -498,9 +504,11 @@ function _draw()
     profile("ceilings")
 
     -- Render walls using raycaster module (now handles its own clipping)
-    profile("walls")
-    Raycaster.render_walls(map, player, wall_sprite, FOG_START, FOG_END)
-    profile("walls")
+    if show_walls then
+        profile("walls")
+        Raycaster.render_walls(map, player, wall_sprite, FOG_START, FOG_END)
+        profile("walls")
+    end
 
     -- Disable color table for UI rendering (restore normal colors)
     Raycaster.disable_colortable()
@@ -770,53 +778,53 @@ end
 function draw_hud()
     color(7)
 
-    -- Position
-    print("pos: " .. flr(player.x*10)/10 .. ", " .. flr(player.z*10)/10, 2, 2, 0)
-    print("pos: " .. flr(player.x*10)/10 .. ", " .. flr(player.z*10)/10, 2, 2)
+    -- -- Position
+    -- print("pos: " .. flr(player.x*10)/10 .. ", " .. flr(player.z*10)/10, 2, 2, 0)
+    -- print("pos: " .. flr(player.x*10)/10 .. ", " .. flr(player.z*10)/10, 2, 2)
 
-    -- Angle (convert from Picotron 0-1 units to degrees)
-    local deg = flr(player.angle * 360) % 360
-    print("angle: " .. deg .. "d", 2, 10, 0)
-    print("angle: " .. deg .. "d", 2, 10)
+    -- -- Angle (convert from Picotron 0-1 units to degrees)
+    -- local deg = flr(player.angle * 360) % 360
+    -- print("angle: " .. deg .. "d", 2, 10, 0)
+    -- print("angle: " .. deg .. "d", 2, 10)
 
-    -- Pitch (convert from Picotron units to degrees)
-    local pitch_deg = flr(player.pitch * 360)
-    print("pitch: " .. pitch_deg .. "d", 2, 18, 0)
-    print("pitch: " .. pitch_deg .. "d", 2, 18)
+    -- -- Pitch (convert from Picotron units to degrees)
+    -- local pitch_deg = flr(player.pitch * 360)
+    -- print("pitch: " .. pitch_deg .. "d", 2, 18, 0)
+    -- print("pitch: " .. pitch_deg .. "d", 2, 18)
 
-    -- Map stats
-    print("verts: " .. #map.vertices, 2, 26, 0)
-    print("verts: " .. #map.vertices, 2, 26)
-    print("walls: " .. #map.walls, 2, 34, 0)
-    print("walls: " .. #map.walls, 2, 34)
-    print("faces: " .. #map.faces, 2, 42, 0)
-    print("faces: " .. #map.faces, 2, 42)
+    -- -- Map stats
+    -- print("verts: " .. #map.vertices, 2, 26, 0)
+    -- print("verts: " .. #map.vertices, 2, 26)
+    -- print("walls: " .. #map.walls, 2, 34, 0)
+    -- print("walls: " .. #map.walls, 2, 34)
+    -- print("faces: " .. #map.faces, 2, 42, 0)
+    -- print("faces: " .. #map.faces, 2, 42)
 
-    -- Performance metrics
-    print("columns: " .. Raycaster.columns_drawn, 2, 50, 0)
-    print("columns: " .. Raycaster.columns_drawn, 2, 50)
-    print("floor spans: " .. Raycaster.floor_spans_drawn, 2, 58, 0)
-    print("floor spans: " .. Raycaster.floor_spans_drawn, 2, 58)
-    print("ceiling spans: " .. Raycaster.ceiling_spans_drawn, 2, 66, 0)
-    print("ceiling spans: " .. Raycaster.ceiling_spans_drawn, 2, 66)
+    -- -- Performance metrics
+    -- print("columns: " .. Raycaster.columns_drawn, 2, 50, 0)
+    -- print("columns: " .. Raycaster.columns_drawn, 2, 50)
+    -- print("floor spans: " .. Raycaster.floor_spans_drawn, 2, 58, 0)
+    -- print("floor spans: " .. Raycaster.floor_spans_drawn, 2, 58)
+    -- print("ceiling spans: " .. Raycaster.ceiling_spans_drawn, 2, 66, 0)
+    -- print("ceiling spans: " .. Raycaster.ceiling_spans_drawn, 2, 66)
 
-    -- CPU usage (1.0 = 60fps, 2.0 = 30fps)
-    local cpu_str = "cpu: " .. flr(frame_cpu * 100) / 100
-    print(cpu_str, 2, 74, 0)
-    print(cpu_str, 2, 74)
+    -- -- CPU usage (1.0 = 60fps, 2.0 = 30fps)
+    -- local cpu_str = "cpu: " .. flr(frame_cpu * 100) / 100
+    -- print(cpu_str, 2, 74, 0)
+    -- print(cpu_str, 2, 74)
 
-    -- Calculate FPS from CPU (fps = 60 / cpu_usage)
-    local fps = 60
-    if frame_cpu > 0 then
-        fps = flr(60 / frame_cpu)
-    end
-    print("fps: " .. fps, 2, 82, 0)
-    print("fps: " .. fps, 2, 82)
+    -- -- Calculate FPS from CPU (fps = 60 / cpu_usage)
+    -- local fps = 60
+    -- if frame_cpu > 0 then
+    --     fps = flr(60 / frame_cpu)
+    -- end
+    -- print("fps: " .. fps, 2, 82, 0)
+    -- print("fps: " .. fps, 2, 82)
 
-    -- Wireframe toggle state
-    local wire_state = show_wireframe and "on" or "off"
-    print("wireframe(t): " .. wire_state, 2, 90, 0)
-    print("wireframe(t): " .. wire_state, 2, 90)
+    -- -- Wireframe toggle state
+    -- local wire_state = show_wireframe and "on" or "off"
+    -- print("wireframe(t): " .. wire_state, 2, 90, 0)
+    -- print("wireframe(t): " .. wire_state, 2, 90)
 
     -- Instructions
     -- if not mouse_locked then

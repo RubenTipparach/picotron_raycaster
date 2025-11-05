@@ -233,29 +233,40 @@ function Raycaster.render_walls(map, player, wall_sprite, fog_start, fog_end)
                     -- tline3d will interpolate and divide by w to get correct perspective
                     local u = u_t * texture_size
 
-                    -- Clip Y coordinates to screen bounds and adjust V accordingly
+                    -- Calculate V coordinates using world-space ray intersection
+                    -- This handles perspective-correct clipping when wall extends off-screen
                     local v_top = 0
                     local v_bottom = texture_size
 
-                    -- If wall extends above screen, clip and adjust V
+                    -- If wall top extends above screen (y_top < 0), find correct V
                     if y_top < 0 then
-                        local wall_height = y_bottom - y_top
-                        if wall_height > 0 then
-                            -- Calculate how much of the texture to skip
-                            local clip_ratio = -y_top / wall_height
-                            v_top = texture_size * clip_ratio
-                        end
+                        -- Cast ray from camera through top edge of screen (y=0) at this x column
+                        -- Ray direction in camera space: (x_cam, y_cam, z_cam)
+                        -- Screen y=0 corresponds to y_cam = (0 - screen_center_y) * (z / fov)
+                        local screen_y_target = 0
+                        local y_cam_direction = (screen_y_target - Config.SCREEN_CENTER_Y) / fov
+
+                        -- Find where this ray intersects the wall plane at depth z
+                        -- World Y at screen edge = player.y - y_cam_direction * z
+                        local world_y_at_edge = player.y - y_cam_direction * z
+
+                        -- V coordinate is based on world Y position (0 to wall.height maps to texture_size to 0)
+                        -- V=0 is top of texture (at Y=wall.height), V=texture_size is bottom (at Y=0)
+                        v_top = (wall.height - world_y_at_edge) / wall.height * texture_size
                         y_top = 0
                     end
 
-                    -- If wall extends below screen, clip and adjust V
+                    -- If wall bottom extends below screen (y_bottom > 269), find correct V
                     if y_bottom > 269 then
-                        local wall_height = y_bottom - y_top
-                        if wall_height > 0 then
-                            -- Calculate how much of the texture to show
-                            local visible_ratio = (269 - y_top) / wall_height
-                            v_bottom = v_top + texture_size * visible_ratio
-                        end
+                        -- Cast ray from camera through bottom edge of screen (y=269)
+                        local screen_y_target = 269
+                        local y_cam_direction = (screen_y_target - Config.SCREEN_CENTER_Y) / fov
+
+                        -- World Y at screen edge
+                        local world_y_at_edge = player.y - y_cam_direction * z
+
+                        -- V coordinate based on world Y
+                        v_bottom = (wall.height - world_y_at_edge) / wall.height * texture_size
                         y_bottom = 269
                     end
 
