@@ -61,5 +61,7 @@ Config.ARROW_PITCH_SPEED = 0.01   -- ~0.36 degrees per frame
 
 -- Portal rendering settings
 Config.SECTOR_BORDER_TOLERANCE = 0.05  -- Buffer zone to prevent flickering when crossing portals
+Config.PORTAL_OCCLUSION_THRESHOLD = 0.05  -- Minimum visibility ratio (5% = aggressive culling, 0 = only cull if 100% occluded)
+Config.WALL_COVERAGE_THRESHOLD = 0.9  -- Portal hidden if >90% covered by walls
 
 return Config

@@ -216,20 +216,26 @@ end
   @return true if portal is fully occluded
 ]]
 function Raycaster.is_portal_occluded(x_min, x_max, y_min, y_max)
-    -- Check if all columns in the portal's X range are fully occluded
-    -- OR if the visible Y range doesn't overlap with the portal's Y range
+    -- Check if portal is significantly occluded
+    -- We consider a portal occluded if >95% of its potential screen area is blocked
+
+    local total_columns = max(1, x_max - x_min + 1)
+    local visible_columns = 0
+
     for x = x_min, x_max do
         local top_y, bottom_y = Raycaster.get_visible_range(x)
 
         if top_y and bottom_y then
             -- Column has visible range - check if it overlaps portal's Y range
             if bottom_y >= y_min and top_y <= y_max then
-                return false  -- Found at least one visible pixel in portal area
+                visible_columns = visible_columns + 1
             end
         end
     end
 
-    return true  -- All columns fully occluded or no overlap with portal
+    -- Portal is occluded if visibility ratio is below threshold
+    local visibility_ratio = visible_columns / total_columns
+    return visibility_ratio < Config.PORTAL_OCCLUSION_THRESHOLD
 end
 
 --[[
@@ -244,6 +250,36 @@ function Raycaster.is_box_contained(inner_x_min, inner_x_max, inner_y_min, inner
            inner_x_max <= outer_x_max and
            inner_y_min >= outer_y_min and
            inner_y_max <= outer_y_max
+end
+
+--[[
+  Calculate how much of a portal is covered by a wall
+  @param portal_x_min, portal_x_max, portal_y_min, portal_y_max: portal bounds
+  @param wall_x_min, wall_x_max, wall_y_min, wall_y_max: wall bounds
+  @return overlap ratio (0.0 to 1.0)
+]]
+function Raycaster.calculate_box_overlap(portal_x_min, portal_x_max, portal_y_min, portal_y_max,
+                                          wall_x_min, wall_x_max, wall_y_min, wall_y_max)
+    -- Calculate intersection
+    local overlap_x_min = max(portal_x_min, wall_x_min)
+    local overlap_x_max = min(portal_x_max, wall_x_max)
+    local overlap_y_min = max(portal_y_min, wall_y_min)
+    local overlap_y_max = min(portal_y_max, wall_y_max)
+
+    -- No overlap
+    if overlap_x_min > overlap_x_max or overlap_y_min > overlap_y_max then
+        return 0
+    end
+
+    -- Calculate areas
+    local overlap_area = (overlap_x_max - overlap_x_min + 1) * (overlap_y_max - overlap_y_min + 1)
+    local portal_area = (portal_x_max - portal_x_min + 1) * (portal_y_max - portal_y_min + 1)
+
+    if portal_area <= 0 then
+        return 0
+    end
+
+    return overlap_area / portal_area
 end
 
 --[[
@@ -265,7 +301,10 @@ function Raycaster.render_portals(map, player, start_sector_idx, wall_sprite, fl
     local sectors_rendered = 0
 
     -- Recursive rendering function
-    local function render_sector(sector_idx, depth)
+    -- accumulated_wall_boxes: all solid wall boxes from parent sectors in the chain
+    local function render_sector(sector_idx, depth, accumulated_wall_boxes)
+        accumulated_wall_boxes = accumulated_wall_boxes or {}
+
         -- Stop if too deep or already visited this sector
         if depth > max_depth or visited[sector_idx] then
             return
@@ -330,8 +369,13 @@ function Raycaster.render_portals(map, player, start_sector_idx, wall_sprite, fl
         Raycaster.render_sector_ceiling(map, player, sector, ceiling_sprite)
 
         -- Collect solid wall bounding boxes for portal culling
-        -- We need these BEFORE processing portals to check containment
+        -- Start with accumulated boxes from parent sectors in the chain
         local solid_wall_boxes = {}
+        for box in all(accumulated_wall_boxes) do
+            add(solid_wall_boxes, box)
+        end
+
+        -- Add this sector's solid walls to the accumulated list
         for wall_data in all(visible_walls) do
             if not wall_data.is_portal then
                 local wall = wall_data.wall
@@ -358,45 +402,72 @@ function Raycaster.render_portals(map, player, start_sector_idx, wall_sprite, fl
             visible_portals[j + 1] = key
         end
 
-        -- Recursively render visible portals FIRST (BACK-TO-FRONT)
-        -- This renders far sectors before near sectors (painter's algorithm)
+        -- Group portals by target sector to check if ALL portals to a sector are occluded
+        local portals_by_sector = {}
         for portal_data in all(visible_portals) do
             local portal = portal_data.wall
             if portal.portal_to and not visited[portal.portal_to] then
-                -- Calculate portal's screen-space bounding box
-                local x_min, x_max, y_min, y_max = Raycaster.get_portal_screen_bounds(map, player, portal, sector)
+                local target = portal.portal_to
+                if not portals_by_sector[target] then
+                    portals_by_sector[target] = {}
+                end
+                add(portals_by_sector[target], portal_data)
+            end
+        end
 
-                if x_min then
-                    -- ALWAYS render adjacent sectors (depth 0->1) to prevent flickering
-                    -- For deeper sectors (depth 2+), apply occlusion culling
-                    local should_render = false
-                    local next_depth = depth + 1
+        -- Recursively render visible portals FIRST (BACK-TO-FRONT)
+        -- This renders far sectors before near sectors (painter's algorithm)
+        for target_sector, portals_to_target in pairs(portals_by_sector) do
+            local next_depth = depth + 1
 
-                    if next_depth <= 1 then
-                        -- Player's sector (depth 0) and direct neighbors (depth 1): always render (no culling)
-                        should_render = true
-                    else
+            -- ALWAYS render adjacent sectors (depth 0->1) to prevent flickering
+            if next_depth <= 1 then
+                -- Player's sector (depth 0) and direct neighbors (depth 1): always render (no culling)
+                render_sector(target_sector, next_depth, solid_wall_boxes)
+            else
+                -- For deeper sectors: check if ALL portals to this sector are occluded
+                -- by walls in the entire chain (accumulated_wall_boxes from all parent sectors)
+                local any_portal_visible = false
+
+                for portal_data in all(portals_to_target) do
+                    local portal = portal_data.wall
+                    local x_min, x_max, y_min, y_max = Raycaster.get_portal_screen_bounds(map, player, portal, sector)
+
+                    if x_min then
                         -- Check if portal is fully occluded by occlusion buffer
                         local buffer_occluded = Raycaster.is_portal_occluded(x_min, x_max, y_min, y_max)
 
-                        -- Check if portal is contained within any solid wall's bounding box
-                        local contained_by_wall = false
+                        -- Check if portal is significantly covered by ANY solid wall in the chain
+                        -- This includes walls from parent sectors that might be blocking this portal
+                        local total_wall_coverage = 0
                         for wall_box in all(solid_wall_boxes) do
-                            if Raycaster.is_box_contained(x_min, x_max, y_min, y_max,
-                                                           wall_box.x_min, wall_box.x_max,
-                                                           wall_box.y_min, wall_box.y_max) then
-                                contained_by_wall = true
+                            local overlap = Raycaster.calculate_box_overlap(
+                                x_min, x_max, y_min, y_max,
+                                wall_box.x_min, wall_box.x_max,
+                                wall_box.y_min, wall_box.y_max
+                            )
+                            total_wall_coverage = total_wall_coverage + overlap
+
+                            -- Early exit: if portal is mostly covered, stop checking
+                            if total_wall_coverage > Config.WALL_COVERAGE_THRESHOLD then
                                 break
                             end
                         end
 
-                        -- Only recurse if portal is visible and not hidden behind a wall
-                        should_render = not buffer_occluded and not contained_by_wall
-                    end
+                        -- Portal is hidden if covered by walls beyond threshold or fully occluded by buffer
+                        local hidden_by_walls = total_wall_coverage > Config.WALL_COVERAGE_THRESHOLD
 
-                    if should_render then
-                        render_sector(portal.portal_to, next_depth)
+                        -- If this portal is visible, the sector is visible
+                        if not buffer_occluded and not hidden_by_walls then
+                            any_portal_visible = true
+                            break
+                        end
                     end
+                end
+
+                -- Only render sector if at least one portal to it is visible
+                if any_portal_visible then
+                    render_sector(target_sector, next_depth, solid_wall_boxes)
                 end
             end
         end
@@ -432,9 +503,9 @@ function Raycaster.render_portals(map, player, start_sector_idx, wall_sprite, fl
         end
     end
 
-    -- Start rendering from player's sector
+    -- Start rendering from player's sector with empty accumulated wall boxes
     if start_sector_idx then
-        render_sector(start_sector_idx, 0)
+        render_sector(start_sector_idx, 0, {})
     end
 
     -- Copy visited sectors to output table if provided
