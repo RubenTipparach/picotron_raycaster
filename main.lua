@@ -75,10 +75,13 @@ local mouse_locked = false
 local last_mouse_x = 0
 local last_mouse_y = 0
 
+-- Sector tracking (for anti-flicker)
+local last_player_sector = nil
+
 -- Debug options
 local show_wireframe = false
 local show_walls = true
-local use_portal_rendering = false  -- Toggle between old and portal rendering
+local use_portal_rendering = true  -- Toggle between old and portal rendering
 local rendered_sectors = {}  -- Track which sectors were rendered (for wireframe)
 
 -- Performance tracking
@@ -169,9 +172,26 @@ function load_obj(filename)
     -- Build sector tree for portal rendering
     build_sectors()
 
-    -- Position player at center
-    player.x = (map.bounds.min_x + map.bounds.max_x) / 2
-    player.z = (map.bounds.min_z + map.bounds.max_z) / 2
+    -- Position player at sector 1 (always spawn in first sector)
+    if #map.sectors > 0 then
+        local sector = map.sectors[1]
+        local face = sector.floor_face
+
+        -- Calculate center of sector 1's floor
+        local sum_x, sum_z = 0, 0
+        for i = 1, #face do
+            local vert = map.vertices[face[i]]
+            sum_x = sum_x + vert.x
+            sum_z = sum_z + vert.z
+        end
+
+        player.x = sum_x / #face
+        player.z = sum_z / #face
+    else
+        -- Fallback to center if no sectors
+        player.x = (map.bounds.min_x + map.bounds.max_x) / 2
+        player.z = (map.bounds.min_z + map.bounds.max_z) / 2
+    end
 end
 
 --[[
@@ -382,6 +402,117 @@ function find_player_sector(x, z)
 end
 
 --[[
+  Find player sector with anti-flicker tolerance
+  Checks current sector first with a small tolerance buffer
+  to prevent rapid sector switching when near borders
+  Returns sector index or nil
+]]
+local function find_player_sector_stable(x, z)
+    -- If we have a last known sector, keep using it unless we're clearly in an adjacent sector
+    if last_player_sector and last_player_sector <= #map.sectors then
+        local sector = map.sectors[last_player_sector]
+        local face = sector.floor_face
+
+        -- Check if still in current sector
+        local inside = false
+        local n = #face
+
+        for i = 1, n do
+            local v1_idx = face[i]
+            local v2_idx = face[(i % n) + 1]
+            local v1 = map.vertices[v1_idx]
+            local v2 = map.vertices[v2_idx]
+
+            -- Point-in-polygon test
+            if ((v1.z > z) ~= (v2.z > z)) then
+                local x_intersect = (v2.x - v1.x) * (z - v1.z) / (v2.z - v1.z) + v1.x
+                if x < x_intersect then
+                    inside = not inside
+                end
+            end
+        end
+
+        -- If still inside current sector, definitely stay
+        if inside then
+            return last_player_sector
+        end
+
+        -- Not inside current sector - check if we're in an adjacent sector (through a portal)
+        -- We check neighbors first, but if we're on a border, we have a tolerance zone
+        local closest_neighbor = nil
+        local closest_neighbor_dist = 999999
+
+        for wall in all(sector.walls) do
+            if wall.portal_to then
+                local neighbor_sector = map.sectors[wall.portal_to]
+                local neighbor_face = neighbor_sector.floor_face
+
+                -- Check if inside neighbor sector
+                local in_neighbor = false
+                local nn = #neighbor_face
+                local min_dist_to_neighbor = 999999
+
+                for i = 1, nn do
+                    local v1_idx = neighbor_face[i]
+                    local v2_idx = neighbor_face[(i % nn) + 1]
+                    local v1 = map.vertices[v1_idx]
+                    local v2 = map.vertices[v2_idx]
+
+                    if ((v1.z > z) ~= (v2.z > z)) then
+                        local x_intersect = (v2.x - v1.x) * (z - v1.z) / (v2.z - v1.z) + v1.x
+                        if x < x_intersect then
+                            in_neighbor = not in_neighbor
+                        end
+                    end
+
+                    -- Calculate distance to this edge
+                    local edge_dx = v2.x - v1.x
+                    local edge_dz = v2.z - v1.z
+                    local edge_len = sqrt(edge_dx * edge_dx + edge_dz * edge_dz)
+                    if edge_len > 0 then
+                        local t = ((x - v1.x) * edge_dx + (z - v1.z) * edge_dz) / (edge_len * edge_len)
+                        t = max(0, min(1, t))
+                        local closest_x = v1.x + t * edge_dx
+                        local closest_z = v1.z + t * edge_dz
+                        local dist = sqrt((x - closest_x) * (x - closest_x) + (z - closest_z) * (z - closest_z))
+                        min_dist_to_neighbor = min(min_dist_to_neighbor, dist)
+                    end
+                end
+
+                if in_neighbor then
+                    printh("Sector change: " .. last_player_sector .. " -> " .. wall.portal_to)
+                    last_player_sector = wall.portal_to
+                    return wall.portal_to
+                end
+
+                -- Track closest neighbor for fallback
+                if min_dist_to_neighbor < closest_neighbor_dist then
+                    closest_neighbor = wall.portal_to
+                    closest_neighbor_dist = min_dist_to_neighbor
+                end
+            end
+        end
+
+        -- If not clearly in any sector but close to a neighbor (on border), switch to closest neighbor
+        if closest_neighbor and closest_neighbor_dist < Config.SECTOR_BORDER_TOLERANCE then
+            printh("Sector change (border tolerance): " .. last_player_sector .. " -> " .. closest_neighbor)
+            last_player_sector = closest_neighbor
+            return closest_neighbor
+        end
+
+        -- Still not in any adjacent sector - stay in current sector (safer default)
+        return last_player_sector
+    end
+
+    -- No last sector - find any sector
+    local new_sector = find_player_sector(x, z)
+    if new_sector then
+        last_player_sector = new_sector
+    end
+    return new_sector
+end
+
+--[[
   Initialize game
 ]]
 function _init()
@@ -401,11 +532,17 @@ function _init()
     -- sprite-0: wall texture
     -- sprite-1: floor texture
 
+    -- Initialize player sector (for anti-flicker)
+    last_player_sector = find_player_sector(player.x, player.z)
+
     printh("=== FPS Raycaster Started ===")
     printh("Loaded " .. #map.vertices .. " vertices")
     printh("Loaded " .. #map.faces .. " faces")
     printh("Found " .. #map.walls .. " outer walls")
     printh("Player spawn: " .. player.x .. ", " .. player.z)
+    if last_player_sector then
+        printh("Player starting in sector: " .. last_player_sector)
+    end
 end
 
 --[[
@@ -637,7 +774,7 @@ function _draw()
     if use_portal_rendering then
         -- Portal rendering: recursively render visible sectors
         profile("portal")
-        local player_sector = find_player_sector(player.x, player.z)
+        local player_sector = find_player_sector_stable(player.x, player.z)
         -- Clear rendered sectors from last frame
         rendered_sectors = {}
         if player_sector then
@@ -937,7 +1074,7 @@ function draw_hud()
     color(7)
 
     -- Player sector info
-    local player_sector = find_player_sector(player.x, player.z)
+    local player_sector = find_player_sector_stable(player.x, player.z)
     if player_sector then
         local sector = map.sectors[player_sector]
         local portal_count = 0

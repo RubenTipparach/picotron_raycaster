@@ -272,15 +272,19 @@ function Raycaster.render_portals(map, player, start_sector_idx, wall_sprite, fl
         end
 
         -- Check if entire screen is occluded (early exit optimization)
-        local all_occluded = true
-        for x = 0, Config.SCREEN_WIDTH - 1 do
-            if not Raycaster.is_column_occluded(x) then
-                all_occluded = false
-                break
+        -- SKIP this check for player's sector (depth 0) and adjacent sectors (depth 1)
+        -- to prevent flickering when crossing portals
+        if depth > 1 then
+            local all_occluded = true
+            for x = 0, Config.SCREEN_WIDTH - 1 do
+                if not Raycaster.is_column_occluded(x) then
+                    all_occluded = false
+                    break
+                end
             end
-        end
-        if all_occluded then
-            return
+            if all_occluded then
+                return
+            end
         end
 
         visited[sector_idx] = true
@@ -302,8 +306,12 @@ function Raycaster.render_portals(map, player, start_sector_idx, wall_sprite, fl
             local to_camera_z = player.z - wall_mid_z
             local dot = wall.normal_x * to_camera_x + wall.normal_z * to_camera_z
 
-            if dot > 0 then
-                -- Wall faces camera - calculate depth
+            -- For adjacent sectors (depth 0), be VERY lenient with backface culling
+            -- Use a negative threshold to prevent portals from disappearing when on the border
+            local cull_threshold = (depth == 0) and -0.1 or 0
+
+            if dot > cull_threshold then
+                -- Wall faces camera (or close enough for adjacent sectors) - calculate depth
                 local depth_sq = to_camera_x * to_camera_x + to_camera_z * to_camera_z
 
                 if wall.portal_to then
@@ -359,23 +367,35 @@ function Raycaster.render_portals(map, player, start_sector_idx, wall_sprite, fl
                 local x_min, x_max, y_min, y_max = Raycaster.get_portal_screen_bounds(map, player, portal, sector)
 
                 if x_min then
-                    -- Check if portal is fully occluded by occlusion buffer
-                    local buffer_occluded = Raycaster.is_portal_occluded(x_min, x_max, y_min, y_max)
+                    -- ALWAYS render adjacent sectors (depth 0->1) to prevent flickering
+                    -- For deeper sectors (depth 2+), apply occlusion culling
+                    local should_render = false
+                    local next_depth = depth + 1
 
-                    -- Check if portal is contained within any solid wall's bounding box
-                    local contained_by_wall = false
-                    for wall_box in all(solid_wall_boxes) do
-                        if Raycaster.is_box_contained(x_min, x_max, y_min, y_max,
-                                                       wall_box.x_min, wall_box.x_max,
-                                                       wall_box.y_min, wall_box.y_max) then
-                            contained_by_wall = true
-                            break
+                    if next_depth <= 1 then
+                        -- Player's sector (depth 0) and direct neighbors (depth 1): always render (no culling)
+                        should_render = true
+                    else
+                        -- Check if portal is fully occluded by occlusion buffer
+                        local buffer_occluded = Raycaster.is_portal_occluded(x_min, x_max, y_min, y_max)
+
+                        -- Check if portal is contained within any solid wall's bounding box
+                        local contained_by_wall = false
+                        for wall_box in all(solid_wall_boxes) do
+                            if Raycaster.is_box_contained(x_min, x_max, y_min, y_max,
+                                                           wall_box.x_min, wall_box.x_max,
+                                                           wall_box.y_min, wall_box.y_max) then
+                                contained_by_wall = true
+                                break
+                            end
                         end
+
+                        -- Only recurse if portal is visible and not hidden behind a wall
+                        should_render = not buffer_occluded and not contained_by_wall
                     end
 
-                    -- Only recurse if portal is visible and not hidden behind a wall
-                    if not buffer_occluded and not contained_by_wall then
-                        render_sector(portal.portal_to, depth + 1)
+                    if should_render then
+                        render_sector(portal.portal_to, next_depth)
                     end
                 end
             end

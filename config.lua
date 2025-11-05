@@ -59,4 +59,7 @@ Config.MAX_PITCH = 0.125       -- Max look up/down: 45 degrees (45/360 = 0.125)
 Config.ARROW_TURN_SPEED = 0.015   -- ~0.54 degrees per frame
 Config.ARROW_PITCH_SPEED = 0.01   -- ~0.36 degrees per frame
 
+-- Portal rendering settings
+Config.SECTOR_BORDER_TOLERANCE = 0.05  -- Buffer zone to prevent flickering when crossing portals
+
 return Config
